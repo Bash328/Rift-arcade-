@@ -12,6 +12,8 @@ const BOT_FILL = 4;
 /** Seconds before the first bot joins a lonely player, then between the rest. */
 const BOT_FIRST_DELAY = 6;
 const BOT_NEXT_DELAY = 2;
+/** Seconds after a tag during which the player who was just tagged cannot be tagged straight back. */
+const TAG_BACK_BLOCK = 2;
 const BOT_NAMES = ["Pip", "Moss", "Dot", "Bolt", "Zig", "Fizz", "Nova", "Taco"];
 
 /** What a bot is doing: how it steers, and a stuck check that makes it hop and turn. */
@@ -44,6 +46,9 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   private botCount = 0;
   private bots = new Map<string, BotBrain>();
   private pacers = new Map<string, InputPacer>();
+  /** Whoever was "it" before the last tag, and how long they stay safe from the player who just tagged them. */
+  private safeId = "";
+  private safeLeft = 0;
 
   messages = {
     // movement arrives through the input buffer above — register handlers here
@@ -143,11 +148,16 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     if (!it || this.state.players.size < 2) { return; }
 
     this.cooldown = Math.max(0, this.cooldown - ctx.dt);
+    this.safeLeft = Math.max(0, this.safeLeft - ctx.dt);
     for (const [sessionId, player] of this.state.players) {
       if (sessionId === this.state.it) { continue; }
       player.score += ctx.dt; // survival time
       // ponytail: circle test, tagging the first overlap in map order; fine for 8 players
+      // No tag-backs: two players overlapping would otherwise pass "it" back and forth every cooldown.
+      if (this.safeLeft > 0 && sessionId === this.safeId) { continue; }
       if (this.cooldown === 0 && Math.hypot(player.x - it.x, player.y - it.y, player.z - it.z) < PLAYER_HALF * 2) {
+        this.safeId = this.state.it;
+        this.safeLeft = TAG_BACK_BLOCK;
         this.state.it = sessionId;
         this.cooldown = TAG_COOLDOWN;
         break;
@@ -220,6 +230,12 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
             if (bot.x < edge || bot.x > arena.width - edge) { vx += (arena.width / 2 - bot.x) * 2; }
             if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
           }
+          // Don't pile up on another runner (even when nobody is chasing): bots on top of each other look like one glitching cube.
+          for (const [otherId, other] of this.state.players) {
+            if (otherId === id || otherId === this.state.it) { continue; }
+            const gap = Math.hypot(bot.x - other.x, bot.y - other.y);
+            if (gap < 90) { vx += ((bot.x - other.x) / (gap || 1)) * 400; vy += ((bot.y - other.y) / (gap || 1)) * 400; }
+          }
         }
         const idle = Math.random() < 0.04;
         brain.dirX = idle || Math.abs(vx) < 20 ? 0 : Math.sign(vx);
@@ -261,6 +277,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.state.timeLeft = this.roundClock;
     this.state.winner = "";
     this.cooldown = 0;
+    this.safeLeft = 0;
     this.respawn();
   }
 

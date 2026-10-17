@@ -431,4 +431,25 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(plan.drop, 20 - MAX_BACKLOG);
     assert.ok(plan.apply >= 1 && plan.apply <= 2);
   });
+
+  it("no tag-backs: the player who was just tagged cannot tag straight back while overlapping", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic" });
+    const a = await colyseus.connectTo(room);
+    const b = await colyseus.connectTo(room);
+    const pa = room.state.players.get(a.sessionId);
+    const pb = room.state.players.get(b.sessionId);
+    pb.x = pa.x; pb.y = pa.y;
+    await room.waitForNextTimestep();
+    assert.strictEqual(room.state.it, b.sessionId, "tagged");
+
+    (room as any).cooldown = 0; // the cooldown is over, but they still overlap
+    for (let i = 0; i < 4; i++) { pb.x = pa.x; pb.y = pa.y; await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.it, b.sessionId, "no immediate tag-back");
+
+    (room as any).safeLeft = 0; // after the protection runs out they can tag again
+    (room as any).cooldown = 0;
+    pb.x = pa.x; pb.y = pa.y;
+    for (let i = 0; i < 4 && room.state.it === b.sessionId; i++) { await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.it, a.sessionId, "tag-back works once the protection is over");
+  });
 });
