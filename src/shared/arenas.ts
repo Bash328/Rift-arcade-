@@ -20,7 +20,7 @@ export interface ArenaTheme {
   /** Distance fog colour. */
   fog: number;
   /** Surface painted over the floor; plain neon grid when absent. */
-  floor?: "moon" | "ice";
+  floor?: "moon" | "ice" | "maze";
   /** Optional lighting overrides; omitted = the purple neon default. */
   sky?: [string, string, string];
   hemi?: [number, number, number];
@@ -117,7 +117,8 @@ const MAZE: Arena = {
   blurb: "Tall walls to hide behind, low walls to vault, corners to ambush.",
   width: W, height: H, spawnRadius: 170,
   gravity: 1, jump: 1, slide: 0, roundSeconds: 90,
-  theme: { edge: 0x2dff8f, rim: 0xffd23f, grid: 0x1fa86a, slab: 0x061410, block: 0x0e2218, fog: 0x04140e },
+  theme: { edge: 0x2dff8f, rim: 0xffd23f, grid: 0x1fa86a, slab: 0x061410, block: 0x0e2218, fog: 0x0f2a1e, floor: "maze",
+    sky: ["#06140f", "#123a2b", "#5a8a4a"], hemi: [0x9be8b0, 0x1a2a1a, 1.2], sun: [0xffe9b0, 2] },
   obstacles: mirrored([
     { x: 330, y: 140, hw: 230, hh: 12, h: 100 }, // top rail
     { x: 140, y: 390, hw: 12, hh: 150, h: 100 }, // left rail

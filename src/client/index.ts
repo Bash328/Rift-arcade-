@@ -13,6 +13,7 @@ import {
   runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, SHADOW_MAP,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
+import { skinObstacle, rimScenery } from "./scenery.js";
 
 const statusEl = document.getElementById("status")!;
 const arenaEl = document.getElementById("arena")!;
@@ -76,16 +77,20 @@ function addMoonSky(parent: THREE.Object3D, W: number, H: number) {
 let drift: { attr: THREE.BufferAttribute; fall: number; top: number; W: number; H: number } | null = null;
 let flakeSprite: THREE.Texture | undefined;
 
-function addDrift(parent: THREE.Object3D, W: number, H: number, snow: boolean) {
-  const count = (snow ? 260 : 60) >> (LITE ? 1 : 0);
-  const top = snow ? 500 : 90;
+function addDrift(parent: THREE.Object3D, W: number, H: number, kind: "snow" | "dust" | "fireflies") {
+  const snow = kind === "snow";
+  const count = (snow ? 260 : kind === "dust" ? 60 : 45) >> (LITE ? 1 : 0);
+  const top = snow ? 500 : kind === "dust" ? 90 : 120;
   const pts = new Float32Array(count * 3);
   for (let i = 0; i < pts.length; i += 3) { pts[i] = Math.random() * W; pts[i + 1] = Math.random() * top; pts[i + 2] = Math.random() * H; }
   const attr = new THREE.BufferAttribute(pts, 3);
   flakeSprite ??= loadFx("circle_05");
   const points = new THREE.Points(
     new THREE.BufferGeometry().setAttribute("position", attr),
-    new THREE.PointsMaterial({ size: snow ? 5 : 4, map: flakeSprite, transparent: true, opacity: snow ? 0.9 : 0.35, depthWrite: false, blending: THREE.AdditiveBlending, color: snow ? 0xffffff : 0xcfcfe0 }),
+    new THREE.PointsMaterial({
+      size: kind === "fireflies" ? 9 : snow ? 5 : 4, map: flakeSprite, transparent: true, opacity: snow ? 0.9 : kind === "dust" ? 0.35 : 1,
+      depthWrite: false, blending: THREE.AdditiveBlending, color: snow ? 0xffffff : kind === "dust" ? 0xcfcfe0 : 0xd8ff6a,
+    }),
   );
   points.frustumCulled = false;
   parent.add(points);
@@ -99,6 +104,7 @@ function driftStep(dt: number, t: number) {
   for (let i = 0; i < a.length; i += 3) {
     a[i] += Math.sin(t / 900 + i) * 12 * dt + (fall ? 0 : 8 * dt);
     a[i + 1] -= fall * dt;
+    if (!fall) { a[i + 1] += Math.sin(t / 700 + i * 3) * 6 * dt; }
     if (a[i + 1] < 0) { a[i + 1] += top; }
     if (a[i] > W) { a[i] -= W; } else if (a[i] < 0) { a[i] += W; }
     if (a[i + 2] > H) { a[i + 2] -= H; }
@@ -107,13 +113,13 @@ function driftStep(dt: number, t: number) {
 }
 
 /** Painted floor: grey dust and craters for the moon, pale glossy ice with cracks for the rink. */
-function floorTexture(kind: "moon" | "ice") {
+function floorTexture(kind: "moon" | "ice" | "maze") {
   let tex = floorTextures.get(kind);
   if (!tex) { tex = paintFloor(kind); floorTextures.set(kind, tex); }
   return tex;
 }
 
-function paintFloor(kind: "moon" | "ice") {
+function paintFloor(kind: "moon" | "ice" | "maze") {
   const c = document.createElement("canvas");
   c.width = 1024; c.height = 768;
   const g = c.getContext("2d")!;
@@ -127,6 +133,10 @@ function paintFloor(kind: "moon" | "ice") {
       grad.addColorStop(0, "rgba(40,38,52,0.55)"); grad.addColorStop(0.8, "rgba(40,38,52,0.25)"); grad.addColorStop(0.92, "rgba(230,228,240,0.45)"); grad.addColorStop(1, "rgba(0,0,0,0)");
       g.fillStyle = grad; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
     }
+  } else if (kind === "maze") {
+    g.fillStyle = "#26402a"; g.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < 9000; i++) { g.fillStyle = `hsla(${90 + rnd(50)},${35 + rnd(30)}%,${12 + rnd(22)}%,0.5)`; g.fillRect(rnd(c.width), rnd(c.height), 1 + rnd(3), 2 + rnd(6)); }
+    for (let i = 0; i < 25; i++) { g.fillStyle = `rgba(80,60,35,${0.1 + rnd(0.15)})`; g.beginPath(); g.ellipse(rnd(c.width), rnd(c.height), 15 + rnd(40), 8 + rnd(20), 0, 0, 7); g.fill(); }
   } else {
     const grad = g.createLinearGradient(0, 0, c.width, c.height);
     grad.addColorStop(0, "#d6f3ff"); grad.addColorStop(0.5, "#a9dcf5"); grad.addColorStop(1, "#cdeeff");
@@ -161,8 +171,9 @@ function buildArena(arena: Arena) {
   sun.color.set(theme.sun?.[0] ?? 0xffffff);
   sun.intensity = theme.sun?.[1] ?? 2.2;
   drift = null;
-  if (theme.floor === "moon") { addMoonSky(arenaGroup, W, H); addDrift(arenaGroup, W, H, false); }
-  if (theme.floor === "ice") { addDrift(arenaGroup, W, H, true); }
+  if (theme.floor === "moon") { addMoonSky(arenaGroup, W, H); addDrift(arenaGroup, W, H, "dust"); }
+  if (theme.floor === "ice") { addDrift(arenaGroup, W, H, "snow"); }
+  if (theme.floor === "maze") { addDrift(arenaGroup, W, H, "fireflies"); }
   if (theme.floor === "ice" && !iceEnv) {
     const pmrem = new THREE.PMREMGenerator(renderer);
     iceEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -185,14 +196,10 @@ function buildArena(arena: Arena) {
   // Long walls glow in the rim colour, blocks and pillars in the edge colour, so the layout reads at a glance.
   for (const o of arena.obstacles) {
     const long = Math.max(o.hw, o.hh) > 2 * Math.min(o.hw, o.hh);
-    const box = neonBox(arenaGroup, o.hw * 2, o.h, o.hh * 2, o.x, o.h / 2, o.y, long ? theme.rim : theme.edge, theme.block);
-    const mat = box.material as THREE.MeshStandardMaterial;
-    if (theme.floor === "moon") { mat.roughness = 1; }
-    if (theme.floor === "ice") {
-      Object.assign(mat, { roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.7, depthWrite: false, envMap: iceEnv, envMapIntensity: 0.8 });
-      box.castShadow = false;
-    }
+    const edge = long ? theme.rim : theme.edge;
+    if (!skinObstacle(arenaGroup, o, theme, edge, iceEnv)) { neonBox(arenaGroup, o.hw * 2, o.h, o.hh * 2, o.x, o.h / 2, o.y, edge, theme.block); }
   }
+  if (theme.floor) { rimScenery(arenaGroup, W, H, theme.floor, LITE); }
 
   if (theme.floor) {
     const floor = new THREE.Mesh(
