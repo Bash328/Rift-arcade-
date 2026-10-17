@@ -310,16 +310,49 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(locked.state.nextArena, "ice", "a locked room keeps its arena");
   });
 
-  it("quick play matches players who pick the same arena, and keeps others apart", async () => {
-    const a = await colyseus.sdk.joinOrCreate("my_room", { name: "A", arena: "ice" });
-    const b = await colyseus.sdk.joinOrCreate("my_room", { name: "B", arena: "ice" });
-    const c = await colyseus.sdk.joinOrCreate("my_room", { name: "C", arena: "moon" });
-    const d = await colyseus.sdk.joinOrCreate("my_room", { name: "D", arena: "" });
-    assert.strictEqual(a.roomId, b.roomId, "same arena pick shares a room");
-    assert.notStrictEqual(c.roomId, a.roomId, "a different pick gets its own room");
-    assert.notStrictEqual(d.roomId, a.roomId, "rotating players are not put in a locked room");
-    assert.notStrictEqual(d.roomId, c.roomId);
-    assert.strictEqual((a.state as any).arena, "ice");
-    assert.strictEqual((c.state as any).arena, "moon");
+  it("quick play is one shared pool: different arena picks still meet in one room", async () => {
+    const a = await colyseus.sdk.joinOrCreate("my_room", { name: "A", vote: "ice" });
+    const b = await colyseus.sdk.joinOrCreate("my_room", { name: "B", vote: "moon" });
+    const c = await colyseus.sdk.joinOrCreate("my_room", { name: "C", vote: "" });
+    assert.strictEqual(a.roomId, b.roomId, "nobody is split off by their pick");
+    assert.strictEqual(a.roomId, c.roomId);
+    assert.strictEqual((a.state as any).arena, "ice", "the creator's pick sets the first arena");
+  });
+
+  it("players vote for the next arena; a locked room ignores votes", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true });
+    const [a, b, c] = [await colyseus.connectTo(room, { name: "A" }), await colyseus.connectTo(room, { name: "B" }), await colyseus.connectTo(room, { name: "C" })];
+    const settle = async (done: () => boolean, steps = 60) => {
+      for (let i = 0; i < steps && !done(); i++) { await room.waitForNextTimestep(); }
+    };
+
+    (room as any).roundClock = 0.001;
+    await settle(() => !!room.state.winner);
+    assert.ok(room.state.winner, "round is over, voting is open");
+
+    a.send("vote", "maze"); b.send("vote", "maze"); c.send("vote", "ice");
+    await settle(() => room.state.nextArena === "maze");
+    assert.strictEqual(room.state.nextArena, "maze", "the majority wins");
+
+    a.send("vote", "bogus"); // not an arena: ignored
+    b.send("vote", "ice");   // maze 1, ice 2
+    await settle(() => room.state.nextArena === "ice");
+    assert.strictEqual(room.state.nextArena, "ice", "changing a vote changes the result");
+    assert.strictEqual(room.state.players.get(a.sessionId).vote, "maze", "an invalid vote changed nothing");
+
+    (room as any).overLeft = 0.001;
+    await settle(() => !room.state.winner);
+    assert.strictEqual(room.state.arena, "ice", "the voted arena is played");
+    assert.ok([...room.state.players.values()].every((p) => p.vote === ""), "votes start fresh each round");
+
+    const locked = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "moon" });
+    const x = await colyseus.connectTo(locked, { name: "X" });
+    await colyseus.connectTo(locked, { name: "Y" });
+    (locked as any).roundClock = 0.001;
+    for (let i = 0; i < 60 && !locked.state.winner; i++) { await locked.waitForNextTimestep(); }
+    x.send("vote", "maze");
+    for (let i = 0; i < 5; i++) { await locked.waitForNextTimestep(); }
+    assert.strictEqual(locked.state.locked, true);
+    assert.strictEqual(locked.state.nextArena, "moon", "a locked room keeps its arena");
   });
 });

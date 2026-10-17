@@ -31,6 +31,8 @@ export const Player = schema({
   hue: t.number(),
   /** Index into PETS: which animal this player is. */
   pet: t.number(),
+  /** Arena id this player voted for after the round, or "". */
+  vote: t.string(),
 });
 export type Player = SchemaType<typeof Player>;
 
@@ -42,6 +44,8 @@ export const MyRoomState = schema({
   /** Id of the arena being played, and the one the next round will use. */
   arena: t.string(),
   nextArena: t.string(),
+  /** A private room whose host locked one arena: no voting. */
+  locked: t.boolean(),
   /** Whole seconds left in the round. */
   timeLeft: t.number(),
   /** Name of the last round's winner while the end banner shows, else "". */
