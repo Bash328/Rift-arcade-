@@ -14,6 +14,7 @@ const BOT_FIRST_DELAY = 6;
 const BOT_NEXT_DELAY = 2;
 /** Seconds after a tag during which the player who was just tagged cannot be tagged straight back. */
 const TAG_BACK_BLOCK = 2;
+const IDLE_INPUT = { moveX: 0, moveY: 0, jump: 0 };
 const BOT_NAMES = ["Pip", "Moss", "Dot", "Bolt", "Zig", "Fizz", "Nova", "Taco"];
 
 /** What a bot is doing: how it steers, and a stuck check that makes it hop and turn. */
@@ -127,10 +128,11 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       let dropped = 0;
       let applied = 0;
       if (drop + apply === 0) { continue; }
+      const frozen = this.overLeft > 0; // the winner is showing: the game stops, so every input counts as "no input"
       for (const input of channel) {
         // Pulling an input consumes it, so every pulled one is either dropped or applied; stop right after the last.
         if (dropped < drop) { dropped++; if (dropped >= drop && apply === 0) { break; } continue; } // stale: the player moved on during a stall
-        stepEntity(player, input, ctx.dt, this.arena);
+        stepEntity(player, frozen ? IDLE_INPUT : input, ctx.dt, this.arena);
         if (++applied >= apply) { break; } // the rest stay buffered for the next tick
       }
     }
@@ -140,6 +142,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
 
     if (this.overLeft > 0) {
       this.overLeft -= ctx.dt;
+      this.state.nextIn = Math.max(0, Math.ceil(this.overLeft));
       if (this.overLeft <= 0) { this.newRound(); }
       return;
     }
@@ -266,7 +269,9 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       }
       const hopping = brain.unstick > 0;
       brain.unstick = Math.max(0, brain.unstick - dt);
-      stepEntity(bot, hopping ? { moveX: brain.altX, moveY: brain.altY, jump: 1 } : { moveX: brain.dirX, moveY: brain.dirY, jump: 0 }, dt, arena);
+      const command = this.overLeft > 0 ? IDLE_INPUT // the winner is showing: bots stop too
+        : hopping ? { moveX: brain.altX, moveY: brain.altY, jump: 1 } : { moveX: brain.dirX, moveY: brain.dirY, jump: 0 };
+      stepEntity(bot, command, dt, arena);
     }
   }
 
@@ -277,6 +282,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     }
     this.state.winner = best?.name ?? "";
     this.overLeft = ROUND_END_PAUSE;
+    this.state.nextIn = ROUND_END_PAUSE;
     // A room the host locked stays put; any other moves on to a different arena.
     this.state.nextArena = this.lockedArena ?? this.pickArena(this.state.arena);
   }
@@ -287,6 +293,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.roundClock = this.arena.roundSeconds;
     this.state.timeLeft = this.roundClock;
     this.state.winner = "";
+    this.state.nextIn = 0;
     this.cooldown = 0;
     this.safeLeft = 0;
     this.respawn();

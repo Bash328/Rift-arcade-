@@ -18,4 +18,4 @@ export const PLAYER_SPEED = 300;
 export const TAG_COOLDOWN = 1;
 
 /** How long the winner banner shows before the next round. */
-export const ROUND_END_PAUSE = 6;
+export const ROUND_END_PAUSE = 5;

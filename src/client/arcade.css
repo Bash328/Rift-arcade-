@@ -789,3 +789,25 @@ button.btn {
 .lobby select { appearance: auto; color-scheme: dark; }
 
 .lobby__hint { font-size: 0.7rem; letter-spacing: 0; text-transform: none; color: var(--muted); }
+
+/* ---------- Round-over card: the winner, a countdown to the next round, and a way out ---------- */
+
+.roundend {
+  position: absolute; inset: 50% auto auto 50%; translate: -50% -50%; z-index: 25;
+  display: grid; justify-items: center; gap: 0.35rem;
+  min-width: min(22rem, 80%); padding: 1rem 1.6rem;
+  text-align: center;
+  background: #050109e6; border: 2px solid var(--cyan); border-radius: 14px;
+  box-shadow: 0 0 28px #35e5ff55, inset 0 0 18px #35e5ff22;
+  animation: roundend-pop 0.35s var(--ease);
+}
+.roundend[hidden] { display: none; }
+.roundend p { margin: 0; }
+.roundend__label { font: 700 0.7rem/1 var(--display); letter-spacing: 0.3em; text-transform: uppercase; color: var(--muted); }
+.roundend__winner { font: 800 clamp(1.3rem, 5vw, 2rem)/1.1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: #fff; text-shadow: 0 0 14px var(--pink); }
+.roundend__next { font-size: 0.8rem; color: var(--lavender); }
+.roundend__row { display: flex; align-items: center; gap: 1rem; margin-top: 0.4rem; }
+.roundend__count { font: 800 2.4rem/1 var(--display); color: var(--cyan); text-shadow: 0 0 12px var(--cyan); min-width: 1.6ch; }
+.roundend .lbtn { display: inline-flex; align-items: center; text-decoration: none; }
+@keyframes roundend-pop { from { scale: 0.85; opacity: 0; } to { scale: 1; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .roundend { animation: none; } }

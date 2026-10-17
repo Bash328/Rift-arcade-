@@ -452,4 +452,26 @@ describe("testing your Colyseus app", () => {
     for (let i = 0; i < 4 && room.state.it === b.sessionId; i++) { await room.waitForNextTimestep(); }
     assert.strictEqual(room.state.it, a.sessionId, "tag-back works once the protection is over");
   });
+
+  it("round over: the game stops while the winner shows, with a countdown to the next round", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic" });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    await colyseus.connectTo(room, { name: "Bo" });
+    const input = a.input<MoveInput>({ mode: "reliable" });
+    const pa = room.state.players.get(a.sessionId);
+
+    (room as any).roundClock = 0.001;
+    for (let i = 0; i < 6 && !room.state.winner; i++) { await room.waitForNextTimestep(); }
+    assert.ok(room.state.winner, "a winner is announced");
+    assert.ok(room.state.nextIn >= 1 && room.state.nextIn <= 5, `countdown shows ${room.state.nextIn}`);
+
+    const x = pa.x;
+    for (let i = 0; i < 5; i++) { input.data.moveX = 1; input.data.moveY = 0; input.data.jump = 0; input.send(); }
+    for (let i = 0; i < 6; i++) { await room.waitForNextTimestep(); }
+    assert.strictEqual(pa.x, x, "steering does nothing while the winner shows");
+
+    (room as any).overLeft = 0.001;
+    for (let i = 0; i < 6 && room.state.winner; i++) { await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.nextIn, 0, "the countdown clears when the next round starts");
+  });
 });

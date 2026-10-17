@@ -16,6 +16,10 @@ import { Avatar } from "./avatars.js";
 import { skinObstacle, rimScenery } from "./scenery.js";
 
 const statusEl = document.getElementById("status")!;
+const roundEndEl = document.getElementById("roundEnd")!;
+const roundWinnerEl = document.getElementById("roundWinner")!;
+const roundNextEl = document.getElementById("roundNext")!;
+const roundCountEl = document.getElementById("roundCount")!;
 const arenaEl = document.getElementById("arena")!;
 const boardEl = document.getElementById("board")!;
 const lampEl = document.getElementById("itLamp")!;
@@ -319,6 +323,10 @@ async function main() {
   predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
 
   const input = room.input<MoveInput>({ mode: "reliable" });
+  document.getElementById("roundExit")!.addEventListener("click", () => {
+    try { sessionStorage.removeItem(`seat:${location.pathname}`); } catch { /* private mode */ }
+    void room.leave(); // on purpose, so the server frees the seat now instead of holding it for 30 seconds
+  });
 
   // The first patch is what creates our own Player.
   statusEl.textContent = "Joining...";
@@ -390,6 +398,8 @@ async function main() {
 
     for (let i = 0; i < steps; i++) {
       Object.assign(input.data, controls.read());
+      // The winner is showing and the game has stopped: the server ignores steering, so do not predict any either.
+      if (room.state.winner) { input.data.moveX = 0; input.data.moveY = 0; input.data.jump = 0; }
       input.send();
     }
 
@@ -438,8 +448,14 @@ async function main() {
 
     refreshBoard();
     const { timeLeft, winner, it } = room.state;
+    roundEndEl.hidden = !winner;
+    if (winner) {
+      roundWinnerEl.textContent = winner === me?.name ? "You win!" : `${winner} wins!`;
+      roundNextEl.textContent = room.state.locked ? "Next round starts in" : `Next: ${arenaOf(room.state.nextArena).name}`;
+      roundCountEl.textContent = String(room.state.nextIn);
+    }
     statusEl.textContent = winner
-      ? `Round over! Winner: ${winner}.${room.state.locked ? "" : ` Next: ${arenaOf(room.state.nextArena).name}`}`
+      ? ""
       : room.state.players.size < 2
         ? "Waiting for another player..."
         : `${arenaOf(room.state.arena).name} - ${timeLeft}s${it === room.sessionId ? " - YOU'RE IT!" : ""}`;

@@ -48,6 +48,8 @@ export const MyRoomState = schema({
   timeLeft: t.number(),
   /** Name of the last round's winner while the end banner shows, else "". */
   winner: t.string(),
+  /** Whole seconds until the next round starts while the winner banner shows, else 0. */
+  nextIn: t.number(),
 
 });
 export type MyRoomState = SchemaType<typeof MyRoomState>;
