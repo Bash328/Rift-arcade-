@@ -820,6 +820,10 @@ button.btn {
 
 @media (max-width: 760px) {
   .row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; }
+  .row .cab { min-height: 0; }
+  /* The screen was stretching to fill a 520px-tall cabinet; give it the same 4:3 as the games. */
+  .row .cab__screen { flex: none; aspect-ratio: 4 / 3; min-height: 0; }
+  .row li:has(.cab--dark) { display: none; } /* the powered-off teaser would sit alone on a second row */
   .row .cab__bezel { padding: 8px; }
   .row .cab__marquee { font-size: clamp(0.7rem, 3.4vw, 1rem); padding-block: 0.5rem; letter-spacing: 0.04em; }
   .row .cab__deck { transform: scale(0.7); margin-block: -0.5rem; }
