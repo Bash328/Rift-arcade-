@@ -582,8 +582,12 @@ button.btn {
   .lobby__title { margin: 0; }
 }
 
-/* A phone held upright: ask for landscape. */
+/* A phone held upright: ask for landscape, but only once a game is being played.
+   The lobby (a name and a few buttons) works upright; tapping a play button asks the browser
+   for full screen and a landscape lock, which Android allows and iPhone does not, so on an
+   iPhone this message shows as soon as the game starts. */
 @media (orientation: portrait) and (pointer: coarse) and (max-width: 700px) {
+  body:has(.cab--game.lobbying) .rotate { display: none; }
   .rotate {
     position: fixed; inset: 0; z-index: 100;
     display: grid; place-content: center; justify-items: center; gap: 1.2rem;
@@ -811,3 +815,13 @@ button.btn {
 .roundend .lbtn { display: inline-flex; align-items: center; text-decoration: none; }
 @keyframes roundend-pop { from { scale: 0.85; opacity: 0; } to { scale: 1; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .roundend { animation: none; } }
+
+/* ---------- Hub on a small screen: two cabinets side by side ---------- */
+
+@media (max-width: 760px) {
+  .row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; }
+  .row .cab__bezel { padding: 8px; }
+  .row .cab__marquee { font-size: clamp(0.7rem, 3.4vw, 1rem); padding-block: 0.5rem; letter-spacing: 0.04em; }
+  .row .cab__deck { transform: scale(0.7); margin-block: -0.5rem; }
+  .row .cab__coin { font-size: 0.6rem; gap: 0.3rem; }
+}
