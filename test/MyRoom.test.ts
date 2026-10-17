@@ -12,6 +12,8 @@ import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
 import { inputBudget } from "../src/rooms/inputPacing.js";
 
 const classic = ARENA_BY_ID.classic;
+/** The layouts are drawn for a 1500-wide arena; block positions scale with the real width (sizes do not). */
+const K = classic.width / 1500;
 
 describe("testing your Colyseus app", () => {
   let colyseus: ColyseusTestServer<typeof appConfig>;
@@ -99,11 +101,12 @@ describe("testing your Colyseus app", () => {
   });
 
   it("stops at a pillar and slides along its face", () => {
-    // Corner fortress at (290, 210), half-extent 45: its left face is x=245, so a player (half 12) stops at 233.
-    const e = { x: 232, y: 210, vx: 0, vy: 0, z: 0, vz: 0 };
+    // Corner fortress at (290, 210) in base units, half-extent 45: a player (half 12) stops 57 from its centre.
+    const stopX = 290 * K - 57 - 1;
+    const e = { x: stopX, y: 210 * K, vx: 0, vy: 0, z: 0, vz: 0 };
     stepEntity(e, { moveX: 1, moveY: 1, jump: 0 }, 1 / TICK_RATE, classic);
-    assert.strictEqual(e.x, 232, "blocked on x");
-    assert.ok(e.y > 210, "still slides on y");
+    assert.strictEqual(e.x, stopX, "blocked on x");
+    assert.ok(e.y > 210 * K, "still slides on y");
   });
 
   it("every arena is playable: no tight gaps, nothing in the spawn area", () => {
@@ -169,16 +172,16 @@ describe("testing your Colyseus app", () => {
     const maze = ARENA_BY_ID.maze;
     const dt = 1 / TICK_RATE;
     const climb = (fromY: number) => {
-      const e = { x: 330, y: fromY, vx: 0, vy: 0, z: 0, vz: 0 };
+      const e = { x: 330 * K, y: fromY, vx: 0, vy: 0, z: 0, vz: 0 };
       for (let i = 0; i < 45; i++) { stepEntity(e, { moveX: 0, moveY: -1, jump: 1 }, dt, maze); }
       return e.y;
     };
-    // Top rail: a tall wall (h100) centred at y=140, half-thickness 12; a player's edge stops at y=164.
-    assert.ok(climb(190) >= 164 - 1, "stopped by the tall wall");
-    // Hurdle: a low wall (h45) at y=225 between x 200..400.
-    const hurdle = { x: 300, y: 250, vx: 0, vy: 0, z: 0, vz: 0 };
+    // Top rail: a tall wall (h100) centred at y=140 (base units), half-thickness 12; a player's edge stops 24 below its centre.
+    assert.ok(climb(190 * K) >= 140 * K + 24 - 1, "stopped by the tall wall");
+    // Hurdle: a low wall (h45) at y=225 (base units) between x 200..400.
+    const hurdle = { x: 300 * K, y: 250 * K, vx: 0, vy: 0, z: 0, vz: 0 };
     for (let i = 0; i < 30; i++) { stepEntity(hurdle, { moveX: 0, moveY: -1, jump: 1 }, dt, maze); }
-    assert.ok(hurdle.y < 213, `vaulted the low wall (ended at y=${hurdle.y})`);
+    assert.ok(hurdle.y < 225 * K - 12, `vaulted the low wall (ended at y=${hurdle.y})`);
   });
 
   it("jumps high enough for steps but not tall blocks, and lands on surfaces", () => {
@@ -195,17 +198,18 @@ describe("testing your Colyseus app", () => {
     assert.ok(apex > 55 && apex < 80, `apex ${apex}: clears 50-high steps, not 80-high blocks`);
 
     // A step (290, 330, h40): a falling player comes to rest on top of it.
-    const s = { x: 290, y: 330, vx: 0, vy: 0, z: 60, vz: 0 };
+    const s = { x: 290 * K, y: 330 * K, vx: 0, vy: 0, z: 60, vz: 0 };
     for (let i = 0; i < 30; i++) { stepEntity(s, idle, dt, classic); }
     assert.strictEqual(s.z, 40);
 
     // The corner fortress (290, 210, h80) stops a grounded player but not one above it.
-    const low = { x: 232, y: 210, vx: 0, vy: 0, z: 0, vz: 0 };
+    const edgeX = 290 * K - 58;
+    const low = { x: edgeX, y: 210 * K, vx: 0, vy: 0, z: 0, vz: 0 };
     stepEntity(low, { ...idle, moveX: 1 }, dt, classic);
-    assert.strictEqual(low.x, 232, "blocked from the ground");
-    const high = { x: 232, y: 210, vx: 0, vy: 0, z: 85, vz: 0 };
+    assert.strictEqual(low.x, edgeX, "blocked from the ground");
+    const high = { x: edgeX, y: 210 * K, vx: 0, vy: 0, z: 85, vz: 0 };
     stepEntity(high, { ...idle, moveX: 1 }, dt, classic);
-    assert.ok(high.x > 232, "walks over it from above");
+    assert.ok(high.x > edgeX, "walks over it from above");
   });
 
   it("uses a 4-letter code as the room id, and keeps private rooms out of quick play", async () => {

@@ -76,6 +76,7 @@ async function main() {
     quick: quickPlay,
     create: (name) => client.create("void_room", { name, private: true }),
     byId: (code, name) => client.joinById<VoidRoom>(code, { name }),
+    reconnect: (token) => client.reconnect(token) as Promise<GameRoom>,
   });
   showRoomTag(room, "Voidfall");
   audio.play("join");

@@ -48,6 +48,15 @@ const stoneTexture = () => texture("stone", (g, s) => {
   for (let i = 0; i < 800; i++) { g.fillStyle = `rgba(0,0,0,${rnd(0.12)})`; g.fillRect(rnd(s), rnd(s), 2, 2); }
 });
 
+/** Dark metal panels with glowing seams: the Neon Grid block skin. */
+function paintPanel(g: CanvasRenderingContext2D, s: number) {
+  g.fillStyle = "#1a1233"; g.fillRect(0, 0, s, s);
+  for (let i = 0; i < 700; i++) { g.fillStyle = `rgba(255,255,255,${rnd(0.05)})`; g.fillRect(rnd(s), rnd(s), 1 + rnd(3), 1); }
+  g.strokeStyle = "rgba(0,229,255,0.55)"; g.lineWidth = 2;
+  g.strokeRect(1, 1, s - 2, s - 2);
+  g.beginPath(); g.moveTo(0, s / 2); g.lineTo(s / 3, s / 2); g.lineTo(s / 3 + 30, s / 2 + 30); g.lineTo(s, s / 2 + 30); g.stroke();
+}
+
 /** A box whose texture repeats every `tile` world units instead of stretching with the box. */
 function texturedBox(w: number, h: number, d: number, map: THREE.Texture, color: number, tile = 120) {
   const geo = new THREE.BoxGeometry(w, h, d);
@@ -96,6 +105,13 @@ export function skinObstacle(parent: THREE.Object3D, o: Obstacle, theme: ArenaTh
       spike.position.set((rnd(2) - 1) * (o.hw - r), h + sh / 2, (rnd(2) - 1) * (o.hh - r));
       g.add(spike);
     }
+  } else if (look === "neon") {
+    // Dark tech block with a glowing cap; the cap sits inside the top face.
+    const m = texturedBox(w, h, d, texture("panel", paintPanel), 0xffffff, 100);
+    m.position.y = h / 2;
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(w - 2, 1.5, d - 2), new THREE.MeshBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.45 }));
+    cap.position.y = h - 0.75;
+    g.add(m, cap);
   } else {
     // Maze: tall walls are hedges, the low ones you can vault are stone.
     const low = h <= 50;
@@ -123,7 +139,20 @@ export function rimScenery(parent: THREE.Object3D, W: number, H: number, look: L
     const item = new THREE.Group();
     item.position.set(x, 0, z);
     item.rotation.y = rnd(Math.PI * 2);
-    if (look === "moon") {
+    if (look === "neon") {
+      // A light pylon with a glowing head, and a hovering wire diamond above some.
+      const hgt = 120 + rnd(180);
+      const pylon = new THREE.Mesh(new THREE.BoxGeometry(14, hgt, 14), new THREE.MeshStandardMaterial({ color: 0x16102b, roughness: 0.6 }));
+      pylon.position.y = hgt / 2;
+      const head = new THREE.Mesh(new THREE.BoxGeometry(22, 8, 22), new THREE.MeshBasicMaterial({ color: n % 2 ? 0xff2bd6 : 0x00e5ff }));
+      head.position.y = hgt + 4;
+      item.add(pylon, head);
+      if (n % 3 === 0) {
+        const gem = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.OctahedronGeometry(40)), new THREE.LineBasicMaterial({ color: n % 2 ? 0xff2bd6 : 0x00e5ff }));
+        gem.position.y = hgt + 90;
+        item.add(gem);
+      }
+    } else if (look === "moon") {
       const r = 25 + rnd(55), sy = 0.5 + rnd(0.3);
       const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(r), new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.72, 0.05, 0.3 + rnd(0.15)), roughness: 1, flatShading: true }));
       rock.scale.y = sy; rock.position.y = r * sy * 0.5;

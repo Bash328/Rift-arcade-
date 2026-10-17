@@ -61,6 +61,11 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     if (!inRound) { this.spread(); }
   }
 
+  /** A refresh or network blip: hold the seat for 30s so the player can resume as the same character. */
+  onDrop(client: Client) {
+    this.allowReconnection(client, 30).catch(() => {}); // rejects only when the room is already closing
+  }
+
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.quiet.delete(client.sessionId);

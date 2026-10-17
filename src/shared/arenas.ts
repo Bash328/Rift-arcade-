@@ -20,7 +20,7 @@ export interface ArenaTheme {
   /** Distance fog colour. */
   fog: number;
   /** Surface painted over the floor; plain neon grid when absent. */
-  floor?: "moon" | "ice" | "maze";
+  floor?: "moon" | "ice" | "maze" | "neon";
   /** Optional lighting overrides; omitted = the purple neon default. */
   sky?: [string, string, string];
   hemi?: [number, number, number];
@@ -52,7 +52,9 @@ export interface Arena {
 
 /** Layouts are designed for one quarter (top-left) and mirrored into all four, so every spot is fair. */
 function mirrored(quarter: Obstacle[], width: number, height: number): Obstacle[] {
-  return quarter.flatMap((o) => [
+  // Layouts are drawn for BASE_W x BASE_H; a bigger arena spreads the same blocks further apart.
+  const k = width / BASE_W;
+  return quarter.map((o) => ({ ...o, x: o.x * k, y: o.y * k })).flatMap((o) => [
     o,
     { ...o, x: width - o.x },
     { ...o, y: height - o.y },
@@ -60,8 +62,11 @@ function mirrored(quarter: Obstacle[], width: number, height: number): Obstacle[
   ]);
 }
 
-const W = 1500;
-const H = 1125;
+const BASE_W = 1500;
+/** The arena is 20% larger than the layouts were drawn for. */
+const SIZE = 1.2;
+const W = BASE_W * SIZE;
+const H = 1125 * SIZE;
 
 /**
  * Jump height is about 68 on normal gravity: walls and steps of 50 or less can be
@@ -73,7 +78,7 @@ const CLASSIC: Arena = {
   blurb: "The original: cover to dodge around and steps to climb.",
   width: W, height: H, spawnRadius: 170,
   gravity: 1, jump: 1, slide: 0, roundSeconds: 90,
-  theme: { edge: 0x00e5ff, rim: 0xff2bd6, grid: 0x00b8d9, slab: 0x0b0b1a, block: 0x16102b, fog: 0x120826 },
+  theme: { edge: 0x00e5ff, rim: 0xff2bd6, grid: 0x00b8d9, slab: 0x0b0b1a, block: 0x16102b, fog: 0x120826, floor: "neon" },
   obstacles: mirrored([
     { x: 290, y: 210, hw: 45, hh: 45, h: 80 },   // corner fortress: climb it from the step below
     { x: 290, y: 330, hw: 24, hh: 24, h: 40 },   // step up to the fortress

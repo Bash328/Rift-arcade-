@@ -339,7 +339,13 @@ export function runLobby<R extends { reconnectionToken: string }>(join: JoinFns<
     const token = seat.get();
     if (token && join.reconnect) {
       lobbyEl.classList.add("busy");
-      join.reconnect(token).then(joined, () => { seat.clear(); lobbyEl.classList.remove("busy"); autoJoin(); });
+      join.reconnect(token).then(joined, () => {
+        seat.clear();
+        lobbyEl.classList.remove("busy");
+        autoJoin();
+        // After autoJoin, which clears the message when it starts a join.
+        if (!lobbyEl.classList.contains("busy")) { msgEl.textContent = "Your old seat expired, so you are a new player."; }
+      });
     } else { autoJoin(); }
   });
 }
@@ -465,6 +471,7 @@ export function createAudio() {
     muted = !muted;
     try { localStorage.setItem("muted", muted ? "1" : "0"); } catch { /* private mode */ }
     refresh();
+    applyBed();
   };
   refresh();
   muteEl?.addEventListener("click", toggle);
@@ -479,7 +486,61 @@ export function createAudio() {
   }
   function unlock() {
     if (!ctx) { ctx = new AudioContext(); void load(ctx); }
-    void ctx.resume();
+    void ctx.resume().then(applyBed);
+  }
+
+  // Ambient bed per arena look, generated (no sound files): wind, a lunar drone, crickets, an electric hum.
+  let wanted: string | undefined;
+  let bed: { kind: string; out: GainNode; level: number; nodes: AudioScheduledSourceNode[] } | undefined;
+  const LEVELS: Record<string, number> = { ice: 0.16, moon: 0.1, maze: 0.05, neon: 0.07 };
+  function startBed(c: AudioContext, kind: string) {
+    const out = c.createGain();
+    out.gain.value = 0;
+    out.connect(c.destination);
+    const nodes: AudioScheduledSourceNode[] = [];
+    const noise = () => {
+      const buf = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) { d[i] = Math.random() * 2 - 1; }
+      const s = c.createBufferSource(); s.buffer = buf; s.loop = true; nodes.push(s); return s;
+    };
+    const osc = (type: OscillatorType, freq: number) => { const o = c.createOscillator(); o.type = type; o.frequency.value = freq; nodes.push(o); return o; };
+    const filter = (type: BiquadFilterType, freq: number) => { const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq; return f; };
+    const gain = (v: number) => { const g = c.createGain(); g.gain.value = v; return g; };
+    const wobble = (rate: number, depth: number, target: AudioParam) => osc("sine", rate).connect(gain(depth)).connect(target);
+
+    if (kind === "ice") {
+      const gust = gain(0.55);
+      noise().connect(filter("lowpass", 700)).connect(gust).connect(out);
+      wobble(0.11, 0.4, gust.gain);
+    } else if (kind === "moon") {
+      osc("sine", 55).connect(gain(0.5)).connect(out);
+      osc("sine", 82.7).connect(gain(0.3)).connect(out);
+      noise().connect(filter("lowpass", 140)).connect(gain(0.4)).connect(out);
+    } else if (kind === "maze") {
+      for (const [freq, rate] of [[4300, 13], [3900, 9]]) {
+        const chirp = gain(0.5);
+        osc("sine", freq).connect(chirp).connect(out);
+        wobble(rate, 0.5, chirp.gain);
+      }
+    } else {
+      osc("sawtooth", 50).connect(filter("lowpass", 180)).connect(out);
+      osc("sine", 100).connect(gain(0.3)).connect(out);
+    }
+    nodes.forEach((n) => n.start());
+    return { kind, out, level: LEVELS[kind] ?? 0, nodes };
+  }
+  /** Fade to the bed the arena wants (silence when muted or before the first tap). */
+  function applyBed() {
+    if (!ctx || ctx.state !== "running") { return; }
+    if (bed && bed.kind !== wanted) {
+      const old = bed;
+      old.out.gain.setTargetAtTime(0, ctx.currentTime, 0.5);
+      setTimeout(() => old.nodes.forEach((n) => n.stop()), 3000);
+      bed = undefined;
+    }
+    if (!bed && wanted && LEVELS[wanted]) { bed = startBed(ctx, wanted); }
+    bed?.out.gain.setTargetAtTime(muted ? 0 : bed.level, ctx.currentTime, 1.5);
   }
   for (const type of ["pointerdown", "keydown"]) { addEventListener(type, unlock, { passive: true }); }
   addEventListener("keydown", (e) => {
@@ -491,6 +552,8 @@ export function createAudio() {
   });
 
   const api = {
+    /** Which ambient bed to loop ("ice", "moon", "maze", "neon"); anything else is silence. */
+    ambience(kind?: string) { wanted = kind; applyBed(); },
     play(name: Sfx, volume = 1, rate = 1) {
       const buffer = buffers.get(name);
       if (muted || !ctx || ctx.state !== "running" || !buffer) { return; }

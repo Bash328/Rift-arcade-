@@ -77,12 +77,12 @@ function addMoonSky(parent: THREE.Object3D, W: number, H: number) {
 let drift: { attr: THREE.BufferAttribute; fall: number; top: number; x0: number; xr: number; z0: number; zr: number } | null = null;
 let flakeSprite: THREE.Texture | undefined;
 
-function addDrift(parent: THREE.Object3D, W: number, H: number, kind: "snow" | "dust" | "fireflies") {
+function addDrift(parent: THREE.Object3D, W: number, H: number, kind: "snow" | "dust" | "fireflies" | "sparks") {
   const snow = kind === "snow";
-  const count = (snow ? 520 : kind === "dust" ? 60 : 45) >> (LITE ? 1 : 0);
+  const count = (snow ? 520 : kind === "dust" ? 60 : kind === "sparks" ? 70 : 45) >> (LITE ? 1 : 0);
   // Snow also fills the space around the rink; the others stay over the arena.
   const [x0, xr, z0, zr] = snow ? [-1300, W + 2600, -1300, H + 1500] : [0, W, 0, H];
-  const top = snow ? 500 : kind === "dust" ? 90 : 120;
+  const top = snow ? 500 : kind === "dust" ? 90 : kind === "sparks" ? 260 : 120;
   const pts = new Float32Array(count * 3);
   for (let i = 0; i < pts.length; i += 3) { pts[i] = x0 + Math.random() * xr; pts[i + 1] = Math.random() * top; pts[i + 2] = z0 + Math.random() * zr; }
   const attr = new THREE.BufferAttribute(pts, 3);
@@ -90,13 +90,13 @@ function addDrift(parent: THREE.Object3D, W: number, H: number, kind: "snow" | "
   const points = new THREE.Points(
     new THREE.BufferGeometry().setAttribute("position", attr),
     new THREE.PointsMaterial({
-      size: kind === "fireflies" ? 9 : snow ? 6 : 4, map: flakeSprite, transparent: true, opacity: snow ? 0.9 : kind === "dust" ? 0.35 : 1,
-      depthWrite: false, blending: THREE.AdditiveBlending, color: snow ? 0xffffff : kind === "dust" ? 0xcfcfe0 : 0xd8ff6a,
+      size: kind === "fireflies" ? 9 : snow ? 6 : kind === "sparks" ? 6 : 4, map: flakeSprite, transparent: true, opacity: snow ? 0.9 : kind === "dust" ? 0.35 : kind === "sparks" ? 0.8 : 1,
+      depthWrite: false, blending: THREE.AdditiveBlending, color: snow ? 0xffffff : kind === "dust" ? 0xcfcfe0 : kind === "sparks" ? 0x7af0ff : 0xd8ff6a,
     }),
   );
   points.frustumCulled = false;
   parent.add(points);
-  drift = { attr, fall: snow ? 45 : 0, top, x0, xr, z0, zr };
+  drift = { attr, fall: snow ? 45 : kind === "sparks" ? -40 : 0, top, x0, xr, z0, zr };
 }
 
 function driftStep(dt: number, t: number) {
@@ -107,7 +107,7 @@ function driftStep(dt: number, t: number) {
     a[i] += Math.sin(t / 900 + i) * 12 * dt + (fall ? 0 : 8 * dt);
     a[i + 1] -= fall * dt;
     if (!fall) { a[i + 1] += Math.sin(t / 700 + i * 3) * 6 * dt; }
-    if (a[i + 1] < 0) { a[i + 1] += top; }
+    if (a[i + 1] < 0) { a[i + 1] += top; } else if (a[i + 1] > top) { a[i + 1] -= top; }
     if (a[i] > x0 + xr) { a[i] -= xr; } else if (a[i] < x0) { a[i] += xr; }
     if (a[i + 2] > z0 + zr) { a[i + 2] -= zr; }
   }
@@ -115,13 +115,13 @@ function driftStep(dt: number, t: number) {
 }
 
 /** Painted floor: grey dust and craters for the moon, pale glossy ice with cracks for the rink. */
-function floorTexture(kind: "moon" | "ice" | "maze") {
+function floorTexture(kind: "moon" | "ice" | "maze" | "neon") {
   let tex = floorTextures.get(kind);
   if (!tex) { tex = paintFloor(kind); floorTextures.set(kind, tex); }
   return tex;
 }
 
-function paintFloor(kind: "moon" | "ice" | "maze") {
+function paintFloor(kind: "moon" | "ice" | "maze" | "neon") {
   const c = document.createElement("canvas");
   c.width = 1024; c.height = 768;
   const g = c.getContext("2d")!;
@@ -134,6 +134,18 @@ function paintFloor(kind: "moon" | "ice" | "maze") {
       const grad = g.createRadialGradient(x, y, r * 0.2, x, y, r);
       grad.addColorStop(0, "rgba(40,38,52,0.55)"); grad.addColorStop(0.8, "rgba(40,38,52,0.25)"); grad.addColorStop(0.92, "rgba(230,228,240,0.45)"); grad.addColorStop(1, "rgba(0,0,0,0)");
       g.fillStyle = grad; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+  } else if (kind === "neon") {
+    g.fillStyle = "#0b0b1a"; g.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < 2500; i++) { g.fillStyle = `rgba(120,140,255,${rnd(0.05)})`; g.fillRect(rnd(c.width), rnd(c.height), 1 + rnd(3), 1); }
+    // Circuit traces: right-angle runs ending in a node.
+    g.lineWidth = 2; g.lineCap = "square";
+    for (let i = 0; i < 38; i++) {
+      let x = rnd(c.width), y = rnd(c.height);
+      g.strokeStyle = `rgba(${rnd(2) < 1 ? "0,229,255" : "255,43,214"},${0.18 + rnd(0.25)})`;
+      g.beginPath(); g.moveTo(x, y);
+      for (let k = 0; k < 4; k++) { if (k % 2) { y += rnd(120) - 60; } else { x += rnd(160) - 80; } g.lineTo(x, y); }
+      g.stroke(); g.fillStyle = g.strokeStyle; g.fillRect(x - 3, y - 3, 6, 6);
     }
   } else if (kind === "maze") {
     g.fillStyle = "#26402a"; g.fillRect(0, 0, c.width, c.height);
@@ -176,6 +188,8 @@ function buildArena(arena: Arena) {
   if (theme.floor === "moon") { addMoonSky(arenaGroup, W, H); addDrift(arenaGroup, W, H, "dust"); }
   if (theme.floor === "ice") { addDrift(arenaGroup, W, H, "snow"); }
   if (theme.floor === "maze") { addDrift(arenaGroup, W, H, "fireflies"); }
+  if (theme.floor === "neon") { addDrift(arenaGroup, W, H, "sparks"); }
+  audio.ambience(theme.floor);
   if (theme.floor === "ice" && !iceEnv) {
     const pmrem = new THREE.PMREMGenerator(renderer);
     iceEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -241,7 +255,7 @@ function buildArena(arena: Arena) {
   for (let z = 0; z <= H; z += 50) { gridPoints.push(new THREE.Vector3(0, 0.5, z), new THREE.Vector3(W, 0.5, z)); }
   arenaGroup.add(new THREE.LineSegments(
     new THREE.BufferGeometry().setFromPoints(gridPoints),
-    new THREE.LineBasicMaterial({ color: theme.grid, transparent: true, opacity: theme.floor ? 0.2 : 0.45 }),
+    new THREE.LineBasicMaterial({ color: theme.grid, transparent: true, opacity: theme.floor && theme.floor !== "neon" ? 0.2 : 0.45 }),
   ));
 
   moveCamera.setView(
