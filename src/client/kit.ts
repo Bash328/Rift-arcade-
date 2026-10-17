@@ -419,3 +419,36 @@ export function jumpSounds(audio: ReturnType<typeof createAudio>) {
     prev = vz;
   };
 }
+
+/**
+ * Full screen (#fs button, or the F key). The page switches to the "immersive"
+ * layout - the game fills the screen with the controls drawn over it - in full
+ * screen and on phone-sized screens. Hidden where the browser can't do it (iPhone).
+ */
+export function createFullscreen() {
+  const root = document.documentElement;
+  const btn = document.getElementById("fs");
+  const phoneMq = matchMedia("(max-width: 700px), (max-height: 520px)");
+
+  if (!root.requestFullscreen) { btn?.setAttribute("hidden", ""); }
+
+  const sync = () => {
+    const full = !!document.fullscreenElement;
+    root.classList.toggle("is-fullscreen", full);
+    root.classList.toggle("immersive", full || phoneMq.matches);
+    btn?.classList.toggle("on", full);
+    btn?.setAttribute("aria-pressed", String(full));
+  };
+  const toggle = () => {
+    if (document.fullscreenElement) { void document.exitFullscreen(); }
+    else { root.requestFullscreen?.().catch(() => { /* refused: stay windowed */ }); }
+  };
+
+  btn?.addEventListener("click", toggle);
+  addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() === "f" && (e.target as HTMLElement).tagName !== "INPUT") { toggle(); }
+  });
+  document.addEventListener("fullscreenchange", sync);
+  phoneMq.addEventListener("change", sync);
+  sync();
+}

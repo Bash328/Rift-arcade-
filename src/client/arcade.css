@@ -571,38 +571,6 @@ button.btn {
 
 .rotate { display: none; }
 
-@media (max-width: 700px), (max-height: 520px) {
-  .game { overflow: hidden; overscroll-behavior: none; }
-  .game .play { position: fixed; inset: 0; display: block; height: auto; min-height: 0; padding: 0; }
-  .cab--game { position: relative; display: block; width: 100%; height: 100%; max-width: none; min-height: 0; border: 0; border-radius: 0; box-shadow: none; background: #000; }
-  .cab--game .cab__bezel { position: absolute; inset: 0; padding: 0; }
-  .cab--game .cab__screen { width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; box-shadow: none; }
-
-  /* The marquee shrinks to a back button and the IT lamp floating over the game. */
-  .cab--game .cab__marquee { position: absolute; inset: 0 0 auto 0; z-index: 20; display: block; height: 0; padding: 0; border: 0; background: none; pointer-events: none; }
-  .cab--game h1 { display: none; }
-  .back { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto max(0.5rem, env(safe-area-inset-left)); padding: 0.55rem; background: #050109aa; pointer-events: auto; }
-  .back span { display: none; }
-  .lamp { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto 50%; translate: -50% 0; }
-  #status { inset: 0.7rem auto auto 3.6rem; max-width: 40%; }
-  .roomtag { inset: auto auto 0.6rem 50%; translate: -50% 0; }
-
-  /* Controls on top of the screen: stick bottom-left, jump bottom-right. */
-  .cab--game .cab__deck {
-    position: absolute; inset: auto 0 0 0; z-index: 20;
-    min-height: 0; margin: 0; border-radius: 0; background: none;
-    padding: 0 max(1.25rem, env(safe-area-inset-right)) max(0.9rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
-    align-items: flex-end; justify-content: space-between; pointer-events: none;
-  }
-  .cab--game .joy { width: 6.5rem; height: 6.5rem; pointer-events: auto; background: #05010959; border: 2px solid #35e5ff80; box-shadow: none; }
-  .cab--game .joy__knob { opacity: 0.85; }
-  .cab--game .btns { pointer-events: auto; }
-  .cab--game #jump { width: 5rem; height: 5rem; font-size: 0.85rem; opacity: 0.8; }
-  .cab--game .btn--amber, .placard, .cab__coin { display: none; }
-  .cab--game.lobbying .cab__deck { visibility: hidden; }
-
-  .lobby { z-index: 30; gap: 0.4rem; padding-block: 0.5rem; overflow: auto; }
-}
 
 /* Short screens (a phone on its side): lay the lobby out in two columns. */
 @media (max-height: 520px) {
@@ -688,12 +656,51 @@ button.btn {
 }
 .mute:hover { background: #0a0613b3; }
 .mute svg { width: 1.2rem; height: 1.2rem; }
+.mute[hidden] { display: none; }
 .mute .x { display: none; }
 .mute.off .waves { display: none; }
 .mute.off .x { display: block; }
 
-@media (max-width: 700px), (max-height: 520px) {
-  .marquee-right { display: block; }
-  .mute { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto calc(max(0.5rem, env(safe-area-inset-left)) + 2.9rem); background: #050109aa; pointer-events: auto; }
-  #status { inset: 0.7rem auto auto 6.4rem; max-width: 36%; }
+/* ---------- Full-screen button ---------- */
+
+.fsbtn.on .expand, .fsbtn:not(.on) .shrink { display: none; }
+
+/* ---------- Immersive: phones, and full screen on desktop ----------
+   The game fills the screen and the controls are drawn over it. kit.ts adds the
+   `immersive` class to <html> on a phone-sized screen or in full screen. */
+
+.immersive .game { overflow: hidden; overscroll-behavior: none; }
+.immersive .play { position: fixed; inset: 0; display: block; height: auto; min-height: 0; padding: 0; }
+.immersive .cab--game { position: relative; display: block; width: 100%; height: 100%; max-width: none; min-height: 0; border: 0; border-radius: 0; box-shadow: none; background: #000; }
+.immersive .cab--game .cab__bezel { position: absolute; inset: 0; padding: 0; }
+.immersive .cab--game .cab__screen { width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; box-shadow: none; }
+
+/* The marquee shrinks to a back button, sound and full-screen buttons, and the lamp, floating over the game. */
+.immersive .cab--game .cab__marquee { position: absolute; inset: 0 0 auto 0; z-index: 20; display: block; height: 0; padding: 0; border: 0; background: none; pointer-events: none; }
+.immersive .cab--game h1 { display: none; }
+.immersive .back { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto max(0.5rem, env(safe-area-inset-left)); padding: 0.55rem; background: #050109aa; pointer-events: auto; }
+.immersive .back span { display: none; }
+.immersive .marquee-right { display: contents; }
+.immersive .mute { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto calc(max(0.5rem, env(safe-area-inset-left)) + 2.9rem); background: #050109aa; pointer-events: auto; }
+.immersive .fsbtn { inset-inline-start: calc(max(0.5rem, env(safe-area-inset-left)) + 5.4rem); }
+.immersive .lamp { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto 50%; translate: -50% 0; }
+.immersive #status { inset: 0.7rem auto auto 9.2rem; max-width: 36%; }
+.immersive .roomtag { inset: auto auto 0.6rem 50%; translate: -50% 0; }
+
+/* Controls on top of the screen: stick bottom-left, jump bottom-right. */
+.immersive .cab--game .cab__deck {
+  position: absolute; inset: auto 0 0 0; z-index: 20;
+  min-height: 0; margin: 0; border-radius: 0; background: none;
+  padding: 0 max(1.25rem, env(safe-area-inset-right)) max(0.9rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+  align-items: flex-end; justify-content: space-between; pointer-events: none;
 }
+.immersive .cab--game .joy { width: 6.5rem; height: 6.5rem; pointer-events: auto; background: #05010959; border: 2px solid #35e5ff80; box-shadow: none; }
+.immersive .cab--game .joy__knob { opacity: 0.85; }
+.immersive .cab--game .btns { pointer-events: auto; }
+.immersive .cab--game #jump { width: 5rem; height: 5rem; font-size: 0.85rem; opacity: 0.8; }
+.immersive .cab--game .btn--amber, .immersive .placard, .immersive .cab__coin { display: none; }
+.immersive .cab--game.lobbying .cab__deck { visibility: hidden; }
+.immersive .lobby { z-index: 30; gap: 0.4rem; padding-block: 0.5rem; overflow: auto; }
+
+/* A keyboard player in full screen doesn't need the touch controls. */
+@media (pointer: fine) { .is-fullscreen .cab--game .cab__deck { display: none; } }

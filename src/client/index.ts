@@ -8,7 +8,7 @@ import { stepEntity } from "../shared/movement.js";
 import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, OBSTACLES } from "../shared/constants.js";
 import {
   NEON_CYAN, NEON_PINK, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen,
 } from "./kit.js";
 
 const statusEl = document.getElementById("status")!;
@@ -66,6 +66,7 @@ scene.add(new THREE.LineSegments(
 const particles = createParticles(scene);
 const controls = createControls();
 const audio = createAudio();
+createFullscreen();
 const onVz = jumpSounds(audio);
 const moveCamera = createCameraRig(
   camera,

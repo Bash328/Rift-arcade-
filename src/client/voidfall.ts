@@ -8,7 +8,7 @@ import { PLAYER_HALF, GRAVITY } from "../shared/constants.js";
 import { stepVoidEntity, GRID, TILE, VOID_SIZE, SOLID, CRACKING, GONE } from "../shared/void.js";
 import {
   NEON_CYAN, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, type Sfx,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, type Sfx,
 } from "./kit.js";
 
 const statusEl = document.getElementById("status")!;
@@ -46,6 +46,7 @@ const slabOf = (tile: THREE.Mesh) => tile.material as THREE.MeshStandardMaterial
 const particles = createParticles(scene);
 const controls = createControls();
 const audio = createAudio();
+createFullscreen();
 const onVz = jumpSounds(audio);
 const moveCamera = createCameraRig(
   camera,
