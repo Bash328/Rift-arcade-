@@ -3,22 +3,71 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" href="data:," />
-    <title>Colyseus</title>
-    <style>
-      body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 848px; padding: 0 1rem; }
-      #status { font-weight: 600; }
-      #arena { position: relative; width: 800px; height: 600px; max-width: 100%; background: #1114; border-radius: .5rem; overflow: hidden; }
-      .player { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 4px; background: #4ea1ff; will-change: transform; }
-      .player.self { background: #ffd24e; }
-    </style>
+    <meta name="description" content="Rift Arcade: 3D online multiplayer games that run right in your browser." />
+    <meta name="theme-color" content="#120826" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23120826'/%3E%3Cpath d='M17 3l-6 14h6l-3 12 10-16h-7z' fill='%23ff2bd6' stroke='%2300e5ff' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <title>Rift Arcade</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/client/arcade.css" />
   </head>
   <body>
-    <h1>Colyseus</h1>
-    <p id="status">Connecting…</p>
-    <div id="arena"></div>
-    <p>Move with <kbd>WASD</kbd> or the arrow keys. Open a second tab to see another player.</p>
-    <p><a href="/playground">Playground</a> · <a href="/monitor">Monitor</a></p>
-    <script type="module" src="/src/client/index.ts"></script>
+    <main class="hall">
+      <div class="rift" aria-hidden="true">
+        <svg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMin slice">
+          <defs>
+            <filter id="glow" x="-50%" y="-10%" width="200%" height="120%"><feGaussianBlur stdDeviation="14" /></filter>
+          </defs>
+          <path transform="translate(150 0)" d="M520 0l-34 90 46 40-60 86 52 44-48 90 40 36-30 80 28 34" fill="none" stroke="#ff2bd6" stroke-width="26" stroke-linejoin="round" filter="url(#glow)" />
+          <path transform="translate(150 0)" d="M520 0l-34 90 46 40-60 86 52 44-48 90 40 36-30 80 28 34" fill="none" stroke="#00e5ff" stroke-width="3" stroke-linejoin="round" />
+        </svg>
+      </div>
+
+      <h1 class="sign"><span class="sign__rift">RIFT</span><span class="sign__arcade">ARCADE</span></h1>
+      <p class="tagline">Pick a cabinet, grab a friend. Every game runs right in your browser.</p>
+
+      <ul class="row">
+        <li>
+          <a class="cab cab--lit" href="/cube-tag/" aria-label="Play Cube Tag, 1 to 8 players online">
+            <div class="cab__marquee">CUBE TAG</div>
+            <div class="cab__bezel">
+              <div class="cab__screen" aria-hidden="true">
+                <div class="demo"><i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="it"></i></div>
+                <div class="start">PRESS START</div>
+              </div>
+            </div>
+            <div class="cab__deck" aria-hidden="true">
+              <span class="joy"><span class="joy__knob"></span></span>
+              <span class="btns"><span class="btn btn--cyan"></span><span class="btn btn--amber"></span></span>
+            </div>
+            <div class="cab__coin"><span class="slots" aria-hidden="true"><i></i><i></i></span><span>1-8 players <b>online</b></span></div>
+            <div class="cab__base"></div>
+          </a>
+        </li>
+        <li>
+          <div class="cab cab--dark">
+            <div class="cab__marquee">NEXT GAME</div>
+            <div class="cab__bezel"><div class="cab__screen"><div class="static"></div><div class="soon">COMING<br />SOON</div></div></div>
+            <div class="cab__deck" aria-hidden="true"><span class="joy"><span class="joy__knob"></span></span><span class="btns"><span class="btn"></span><span class="btn"></span></span></div>
+            <div class="cab__coin"><span class="slots" aria-hidden="true"><i></i><i></i></span><span>Powered off</span></div>
+            <div class="cab__base"></div>
+          </div>
+        </li>
+        <li>
+          <div class="cab cab--dark">
+            <div class="cab__marquee">NEXT GAME</div>
+            <div class="cab__bezel"><div class="cab__screen"><div class="static"></div><div class="soon">COMING<br />SOON</div></div></div>
+            <div class="cab__deck" aria-hidden="true"><span class="joy"><span class="joy__knob"></span></span><span class="btns"><span class="btn"></span><span class="btn"></span></span></div>
+            <div class="cab__coin"><span class="slots" aria-hidden="true"><i></i><i></i></span><span>Powered off</span></div>
+            <div class="cab__base"></div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="floor-gap"></div>
+      <div class="floor" aria-hidden="true"></div>
+      <p class="credit">Rift Arcade</p>
+    </main>
   </body>
 </html>

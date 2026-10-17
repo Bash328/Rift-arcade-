@@ -1,7 +1,7 @@
 import { Room, Client, CloseCode, type StepContext } from "colyseus";
 import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
 import { stepEntity } from "../shared/movement.js";
-import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT } from "../shared/constants.js";
+import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, TAG_COOLDOWN, ROUND_SECONDS, ROUND_END_PAUSE } from "../shared/constants.js";
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   maxClients = 8;
@@ -18,6 +18,9 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   });
 
   private joinCount = 0;
+  private cooldown = 0;
+  private roundClock = ROUND_SECONDS;
+  private overLeft = 0;
 
   messages = {
     // movement arrives through the input buffer above — register handlers here
@@ -25,6 +28,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   };
 
   onCreate(options: any) {
+    this.state.timeLeft = ROUND_SECONDS;
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
   }
 
@@ -32,18 +36,26 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     console.log(client.sessionId, "joined!");
 
     // Deterministic spawn ring, so two players never start on top of each other.
-    const angle = this.joinCount++ * 2.399963;
+    const n = this.joinCount++;
+    const angle = n * 2.399963;
     this.state.players.set(client.sessionId, new Player({
       x: ARENA_WIDTH / 2 + Math.cos(angle) * 80,
       y: ARENA_HEIGHT / 2 + Math.sin(angle) * 80,
       vx: 0,
       vy: 0,
+      score: 0,
+      name: String(options?.name ?? "").trim().slice(0, 12) || "Player",
+      hue: (n * 137.5 + 200) % 360,
     }));
+    if (!this.state.it) { this.state.it = client.sessionId; }
   }
 
   onLeave(client: Client, code: CloseCode) {
     console.log(client.sessionId, "left!", code);
     this.state.players.delete(client.sessionId);
+    if (this.state.it === client.sessionId) {
+      this.state.it = this.state.players.keys().next().value ?? "";
+    }
   }
 
   onDispose() {
@@ -64,6 +76,48 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
         stepEntity(player, input, ctx.dt);
       }
     }
+
+    if (this.overLeft > 0) {
+      this.overLeft -= ctx.dt;
+      if (this.overLeft <= 0) { this.newRound(); }
+      return;
+    }
+
+    const it = this.state.players.get(this.state.it);
+    if (!it || this.state.players.size < 2) { return; }
+
+    this.cooldown = Math.max(0, this.cooldown - ctx.dt);
+    for (const [sessionId, player] of this.state.players) {
+      if (sessionId === this.state.it) { continue; }
+      player.score += ctx.dt; // survival time
+      // ponytail: circle test, tagging the first overlap in map order; fine for 8 players
+      if (this.cooldown === 0 && Math.hypot(player.x - it.x, player.y - it.y) < PLAYER_HALF * 2) {
+        this.state.it = sessionId;
+        this.cooldown = TAG_COOLDOWN;
+        break;
+      }
+    }
+
+    this.roundClock = Math.max(0, this.roundClock - ctx.dt);
+    this.state.timeLeft = Math.ceil(this.roundClock);
+    if (this.roundClock === 0) { this.endRound(); }
+  }
+
+  private endRound() {
+    let best: Player | undefined;
+    for (const player of this.state.players.values()) {
+      if (!best || player.score > best.score) { best = player; }
+    }
+    this.state.winner = best?.name ?? "";
+    this.overLeft = ROUND_END_PAUSE;
+  }
+
+  private newRound() {
+    for (const player of this.state.players.values()) { player.score = 0; }
+    this.roundClock = ROUND_SECONDS;
+    this.state.timeLeft = ROUND_SECONDS;
+    this.state.winner = "";
+    this.cooldown = 0;
   }
 
   /**

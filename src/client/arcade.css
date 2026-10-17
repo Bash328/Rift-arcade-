@@ -1,0 +1,475 @@
+/* Rift Arcade: shared look for the hub and every game page.
+   One cabinet component (.cab) is reused: a card on the hub, a big one around a game.
+   Style: neon CRT. */
+
+:root {
+  --void: #0a0613;
+  --wall: #140a28;
+  --panel: #1c0f33;
+  --cyan: #35e5ff;
+  --pink: #ff2fd0;
+  --violet: #b721ff;
+  --yellow: #ffd23f;
+  --amber: #ffb23f;
+  --green: #2dff8f;
+  --lavender: #cdb8ff;
+  --muted: #a898cc;
+  --text: #f4f0ff;
+  --display: "Orbitron", system-ui, sans-serif;
+  --ui: "JetBrains Mono", ui-monospace, monospace;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { background: var(--void); scrollbar-color: #4a3a86 var(--void); }
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  font: 500 1rem/1.55 var(--ui);
+  color: var(--text);
+  background:
+    radial-gradient(70% 55% at 50% -5%, #3a1470 0%, transparent 70%),
+    radial-gradient(45% 40% at 90% 95%, #35e5ff1f 0%, transparent 70%),
+    radial-gradient(45% 40% at 8% 90%, #ff2fd02e 0%, transparent 70%),
+    var(--wall);
+  overflow-x: hidden;
+}
+
+::selection { background: var(--pink); color: #12031f; }
+
+a { color: inherit; }
+:focus-visible { outline: 3px solid var(--cyan); outline-offset: 4px; border-radius: 4px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+
+/* ---------- Hub ---------- */
+
+.hall {
+  position: relative;
+  isolation: isolate;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(2rem, 6vw, 4rem) 1rem 0;
+}
+
+/* The rift: a tear of light in the back wall, pushed right so it clears the title. */
+.rift {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: min(70svh, 640px);
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.65;
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+.rift svg { width: 100%; height: 100%; display: block; }
+
+.sign {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font: 800 clamp(2.4rem, 10vw, 5.2rem)/0.95 var(--display);
+  letter-spacing: 0.06em;
+  text-align: center;
+  animation: sign-on 1.4s steps(1, end) both;
+}
+.sign__rift { color: var(--cyan); text-shadow: 0 0 6px var(--cyan), 0 0 28px #35e5ffaa; }
+.sign__arcade { color: var(--pink); text-shadow: 0 0 6px var(--pink), 0 0 28px #ff2fd0aa; }
+
+@keyframes sign-on {
+  0%, 8%, 14%, 40% { opacity: 0.25; }
+  4%, 11%, 20%, 100% { opacity: 1; }
+}
+
+.tagline {
+  margin: 1.2rem 0 0;
+  max-width: 36ch;
+  text-align: center;
+  color: var(--muted);
+  font-size: clamp(0.9rem, 2.4vw, 1.05rem);
+  text-wrap: balance;
+}
+
+.row {
+  list-style: none;
+  margin: clamp(2.5rem, 6vw, 4rem) 0 0;
+  padding: 0;
+  width: 100%;
+  max-width: 1160px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 340px));
+  justify-content: center;
+  gap: clamp(1.75rem, 4vw, 3rem);
+}
+
+.floor-gap { flex: 1; min-height: 3rem; }
+
+/* Arcade carpet: confetti shapes on dark plum, fading in from the wall. */
+.floor {
+  align-self: stretch;
+  height: clamp(8rem, 22svh, 15rem);
+  margin: 0 -1rem;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' fill='none' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20l14 24H-2z' stroke='%2335e5ff'/%3E%3Ccircle cx='78' cy='26' r='9' stroke='%23ff2fd0'/%3E%3Cpath d='M20 84q10-14 20 0t20 0' stroke='%23ffb23f'/%3E%3Cpath d='M86 76l16 16m0-16L86 92' stroke='%2335e5ff'/%3E%3Cpath d='M58 58h12v12H58z' stroke='%23ff2fd0'/%3E%3C/svg%3E") 0 0 / 120px 120px,
+    #160a30;
+  opacity: 0.5;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 55%);
+  mask-image: linear-gradient(to bottom, transparent, #000 55%);
+}
+
+.credit {
+  position: absolute;
+  inset: auto 0 1rem 0;
+  text-align: center;
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-shadow: 0 1px 4px #000, 0 0 14px #000;
+}
+
+/* ---------- Cabinet card ---------- */
+
+.cab {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 520px;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 22px;
+  border: 3px solid var(--cyan);
+  background: radial-gradient(120% 90% at 50% -10%, #2a1148 0%, #140a28 45%, #0a0613 100%);
+  box-shadow:
+    0 0 0 1px #35e5ff40,
+    0 0 28px 4px #35e5ff59,
+    inset 0 0 40px #ff46dc14;
+  transition: transform 0.45s var(--ease), box-shadow 0.45s var(--ease);
+}
+
+a.cab:hover, a.cab:focus-visible {
+  transform: translateY(-8px);
+  box-shadow:
+    0 0 0 1px #35e5ff80,
+    0 0 44px 8px #35e5ff80,
+    inset 0 0 40px #ff46dc1f;
+}
+a.cab:focus-visible { outline-offset: 6px; border-radius: 26px; }
+
+.cab__marquee {
+  flex: none;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, var(--pink) 0%, var(--violet) 100%);
+  border-bottom: 3px solid var(--cyan);
+  font: 800 clamp(1.1rem, 4vw, 1.4rem)/1 var(--display);
+  letter-spacing: 0.12em;
+  color: #fff;
+  text-shadow: 0 0 6px #fff, 0 0 18px var(--pink), 0 0 32px var(--pink);
+}
+
+.cab__bezel { flex: 1 1 auto; display: flex; padding: 16px; }
+
+/* CRT screen: grid, scanlines and a faint vignette over whatever is inside. */
+.cab__screen {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 200px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #050109;
+  border: 2px solid #35e5ff80;
+  box-shadow: inset 0 0 24px #35e5ff26;
+  container-type: inline-size;
+}
+.cab__screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(#35e5ff14 1px, transparent 1px),
+    linear-gradient(90deg, #35e5ff14 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.cab__screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: repeating-linear-gradient(transparent 0, transparent 2px, #00000059 3px);
+  animation: scan 0.5s linear infinite;
+}
+@keyframes scan { to { background-position: 0 8px; } }
+
+/* Control panel */
+.cab__deck {
+  flex: none;
+  min-height: 92px;
+  margin: 0 16px;
+  padding: 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-radius: 10px 10px 0 0;
+  background: linear-gradient(180deg, var(--panel), var(--wall));
+}
+
+/* Hub: the joystick is just a lit knob. The game page turns it into a real stick. */
+.joy {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  flex: none;
+  touch-action: none;
+}
+.joy__knob {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ff8ae8, var(--pink) 60%, #9c00c9 100%);
+  box-shadow: 0 0 14px #ff2fd0b3, 0 4px 0 #6a0083;
+  transition: transform 0.12s var(--ease);
+}
+
+.btns { display: flex; gap: 14px; }
+.btn { width: 28px; height: 28px; border-radius: 50%; }
+.btn--cyan {
+  background: radial-gradient(circle at 35% 30%, #9ff6ff, var(--cyan) 60%, #0098ab 100%);
+  box-shadow: 0 0 10px #35e5ffb3, 0 3px 0 #006775;
+}
+.btn--amber {
+  background: radial-gradient(circle at 35% 30%, #fff0a8, var(--yellow) 60%, #b88900 100%);
+  box-shadow: 0 0 10px #ffd23fb3, 0 3px 0 #8a6400;
+}
+
+/* Footer strip */
+.cab__coin {
+  flex: none;
+  height: 48px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  background: var(--wall);
+  border-top: 1px solid #35e5ff40;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lavender);
+}
+.cab__coin b { color: var(--green); font-weight: 700; }
+.slots { display: flex; gap: 4px; }
+.slots i { width: 5px; height: 18px; border-radius: 2px; background: var(--cyan); display: block; }
+
+.cab__base { display: none; }
+
+/* Powered-off cabinets */
+.cab--dark { filter: saturate(0.35) brightness(0.65); box-shadow: none; }
+.cab--dark .cab__marquee { background: linear-gradient(180deg, #4a3a66, #352752); color: #d6c8f0; text-shadow: none; }
+.cab--dark .cab__screen { background: #0a0712; }
+.cab--dark .cab__screen::after { animation: none; }
+.cab--dark .joy__knob, .cab--dark .btn { background: #332848; box-shadow: none; }
+.cab--dark .cab__coin { color: #a898cc; }
+.cab--dark .slots i { background: #5a4a7a; }
+
+/* ---------- Hub screens ---------- */
+
+/* Cube Tag's attract mode: cubes chasing across the grid. Sizes are in cqw
+   (of the screen width) so it scales with the card. */
+.demo { position: absolute; inset: 0; }
+.demo i {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 7cqw;
+  height: 7cqw;
+  border-radius: 1.2cqw;
+}
+.demo .c1 { background: #4aa0ff; box-shadow: 0 0 3cqw #4aa0ff; animation: roam-a 7s linear infinite; }
+.demo .c2 { background: var(--green); box-shadow: 0 0 3cqw var(--green); animation: roam-b 6s linear infinite; }
+.demo .c3 { background: var(--yellow); box-shadow: 0 0 3cqw var(--yellow); animation: roam-c 8s linear infinite; }
+.demo .it { width: 9cqw; height: 9cqw; background: #ff4a4a; box-shadow: 0 0 5cqw #ff2020; animation: roam-d 5.5s linear infinite; }
+
+@keyframes roam-a { 0%, 100% { translate: 8cqw 10cqw; } 25% { translate: 70cqw 8cqw; } 50% { translate: 76cqw 48cqw; } 75% { translate: 30cqw 52cqw; } }
+@keyframes roam-b { 0%, 100% { translate: 70cqw 50cqw; } 30% { translate: 20cqw 54cqw; } 60% { translate: 12cqw 14cqw; } 80% { translate: 50cqw 22cqw; } }
+@keyframes roam-c { 0%, 100% { translate: 40cqw 30cqw; } 33% { translate: 78cqw 28cqw; } 66% { translate: 52cqw 56cqw; } }
+@keyframes roam-d { 0%, 100% { translate: 20cqw 20cqw; } 25% { translate: 52cqw 14cqw; } 50% { translate: 60cqw 44cqw; } 75% { translate: 26cqw 46cqw; } }
+
+.start {
+  position: absolute;
+  inset: auto 0 5cqw 0;
+  z-index: 3;
+  text-align: center;
+  font: 700 clamp(0.8rem, 5cqw, 1.1rem)/1 var(--display);
+  letter-spacing: 0.14em;
+  color: var(--amber);
+  text-shadow: 0 0 8px var(--amber);
+  animation: blink 1.1s steps(1, end) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.static { display: none; }
+.soon {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  font: 700 clamp(0.8rem, 5cqw, 1.1rem)/1.4 var(--display);
+  letter-spacing: 0.14em;
+  text-align: center;
+  color: #a898cc;
+}
+
+/* ---------- Game page ---------- */
+
+.play {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(0.75rem, 3vw, 2rem) clamp(0.5rem, 3vw, 1.5rem) 2rem;
+}
+
+.cab--game { max-width: 1040px; min-height: 0; }
+
+.cab--game .cab__marquee {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+}
+.cab--game h1 { margin: 0; font: inherit; letter-spacing: inherit; }
+
+.back {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font: 700 0.75rem/1 var(--ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fff;
+  text-decoration: none;
+  text-shadow: none;
+  background: #0a061359;
+  transition: background 0.2s;
+}
+.back:hover { background: #0a0613b3; }
+.back svg { width: 1em; height: 1em; }
+
+.lamp {
+  justify-self: end;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  font: 800 0.85rem/1 var(--display);
+  letter-spacing: 0.1em;
+  color: #d9b4c8;
+  background: #1a0510;
+  text-shadow: none;
+  transition: color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.lamp.on { color: #fff; background: #ff2020; box-shadow: 0 0 18px #ff2020, inset 0 0 4px #ff9090; }
+
+.cab--game .cab__bezel { padding: clamp(8px, 2vw, 16px); }
+.cab--game .cab__screen { aspect-ratio: 4 / 3; flex: 1 1 auto; min-height: 0; background: #000; }
+.cab--game .cab__screen::before { display: none; }
+.cab--game canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+#status {
+  position: absolute;
+  inset: 0.6rem auto auto 0.8rem;
+  z-index: 6;
+  margin: 0;
+  max-width: 55%;
+  font: 700 clamp(0.8rem, 2.4vw, 1.2rem)/1.2 var(--ui);
+  text-shadow: 0 1px 3px #000, 0 0 12px #000;
+  pointer-events: none;
+}
+
+#board {
+  position: absolute;
+  inset: 0.6rem 0.8rem auto auto;
+  z-index: 6;
+  font-size: clamp(0.65rem, 1.8vw, 0.85rem);
+  text-align: right;
+  text-shadow: 0 1px 3px #000, 0 0 10px #000;
+  pointer-events: none;
+}
+#board i { display: inline-block; width: 0.8em; height: 0.8em; margin-right: 0.4em; border-radius: 2px; }
+
+.cab--game .cab__deck { justify-content: center; gap: clamp(1.5rem, 8vw, 4rem); padding-block: 0.9rem; }
+.cab--game .joy {
+  width: clamp(5rem, 22vw, 7rem);
+  height: clamp(5rem, 22vw, 7rem);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, #000, #150a2e);
+  box-shadow: inset 0 0 0 3px #0b0420;
+  cursor: grab;
+}
+.cab--game .joy__knob {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 52%;
+  height: 52%;
+  margin: -26% 0 0 -26%;
+}
+.cab--game .btn { width: clamp(1.8rem, 6vw, 2.4rem); height: clamp(1.8rem, 6vw, 2.4rem); }
+
+.placard {
+  padding: 0.9rem 1.2rem 1.1rem;
+  background: var(--wall);
+  border-top: 1px solid #35e5ff40;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.placard h2 {
+  margin: 0 0 0.35rem;
+  font: 700 0.8rem/1 var(--display);
+  letter-spacing: 0.14em;
+  color: var(--amber);
+}
+.placard p { margin: 0; max-width: 72ch; }
+.placard kbd {
+  padding: 0.05em 0.4em;
+  border-radius: 4px;
+  background: #35285a;
+  color: var(--text);
+  font: 700 0.9em var(--ui);
+}
+
+@media (max-width: 520px) {
+  .cab--game .cab__marquee { grid-template-columns: auto 1fr auto; }
+  .back span { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sign, .start, .cab__screen::after, .demo i { animation: none; }
+  .start { opacity: 1; }
+  .demo .c1 { translate: 8cqw 10cqw; }
+  .demo .c2 { translate: 70cqw 50cqw; }
+  .demo .c3 { translate: 40cqw 30cqw; }
+  .demo .it { translate: 20cqw 20cqw; }
+  .cab, .joy__knob { transition: none; }
+}

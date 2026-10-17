@@ -3,3 +3,5 @@ build
 .colyseus-cloud.json
 .devmode.json
 dist
+
+.impeccable/

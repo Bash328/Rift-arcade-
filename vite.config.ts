@@ -2,7 +2,11 @@ import { defineConfig } from "vite";
 import { colyseus } from "colyseus/vite";
 
 export default defineConfig(({ mode }) => ({
-  build: { outDir: "dist/client" },
+  build: {
+    outDir: "dist/client",
+    // Multi-page: the arcade hub at / and one folder per game.
+    rollupOptions: { input: { hub: "index.html", cubeTag: "cube-tag/index.html" } },
+  },
   server: { allowedHosts: ["rift-arcade.online", "www.rift-arcade.online"]},
   plugins: [
     // The plugin declares a second build environment (dist/server), so every

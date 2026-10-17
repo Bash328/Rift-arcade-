@@ -21,12 +21,22 @@ export const Player = schema({
   y: t.number(),
   vx: t.number(),
   vy: t.number(),
+  score: t.number(),
+  name: t.string(),
+  /** Cube color, 0-360. */
+  hue: t.number(),
 });
 export type Player = SchemaType<typeof Player>;
 
 export const MyRoomState = schema({
 
   players: t.map(Player),
+  /** sessionId of the player who is "it" ("" when the room is empty). */
+  it: t.string(),
+  /** Whole seconds left in the round. */
+  timeLeft: t.number(),
+  /** Name of the last round's winner while the end banner shows, else "". */
+  winner: t.string(),
 
 });
 export type MyRoomState = SchemaType<typeof MyRoomState>;

@@ -1,4 +1,4 @@
-import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, PLAYER_SPEED } from "./constants.js";
+import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, PLAYER_SPEED, OBSTACLES } from "./constants.js";
 
 /**
  * Structural types on purpose: the same step runs on a server Schema instance
@@ -10,6 +10,9 @@ export interface MoveInputLike { moveX: number; moveY: number; }
 
 const clamp = (value: number, min: number, max: number) =>
   (value < min ? min : value > max ? max : value);
+
+const blockedAt = (x: number, y: number) =>
+  OBSTACLES.some((o) => Math.abs(x - o.x) < o.hw + PLAYER_HALF && Math.abs(y - o.y) < o.hh + PLAYER_HALF);
 
 /**
  * The single movement step, run identically by the server (once per received
@@ -32,19 +35,22 @@ export function stepEntity(entity: EntityState, input: MoveInputLike, dt: number
   let vx = dirX * PLAYER_SPEED;
   let vy = dirY * PLAYER_SPEED;
 
-  const x = entity.x + vx * dt;
-  const y = entity.y + vy * dt;
+  const wantX = entity.x + vx * dt;
+  const wantY = entity.y + vy * dt;
 
-  const clampedX = clamp(x, PLAYER_HALF, ARENA_WIDTH - PLAYER_HALF);
-  const clampedY = clamp(y, PLAYER_HALF, ARENA_HEIGHT - PLAYER_HALF);
+  // Axis-separated, so a player slides along a pillar face instead of sticking.
+  const clampedX = clamp(wantX, PLAYER_HALF, ARENA_WIDTH - PLAYER_HALF);
+  const x = blockedAt(clampedX, entity.y) ? entity.x : clampedX;
+  const clampedY = clamp(wantY, PLAYER_HALF, ARENA_HEIGHT - PLAYER_HALF);
+  const y = blockedAt(x, clampedY) ? entity.y : clampedY;
 
-  // Hitting a wall also kills the velocity heading into it, so the reconciler
-  // replays the same stop the server did.
-  if (clampedX !== x) { vx = 0; }
-  if (clampedY !== y) { vy = 0; }
+  // Hitting a wall or pillar also kills the velocity heading into it, so the
+  // reconciler replays the same stop the server did.
+  if (x !== wantX) { vx = 0; }
+  if (y !== wantY) { vy = 0; }
 
-  entity.x = clampedX;
-  entity.y = clampedY;
+  entity.x = x;
+  entity.y = y;
   entity.vx = vx;
   entity.vy = vy;
 }
