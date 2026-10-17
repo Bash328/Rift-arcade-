@@ -8,7 +8,7 @@ import { stepEntity } from "../shared/movement.js";
 import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, OBSTACLES } from "../shared/constants.js";
 import {
   NEON_CYAN, NEON_PINK, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds,
 } from "./kit.js";
 
 const statusEl = document.getElementById("status")!;
@@ -65,6 +65,8 @@ scene.add(new THREE.LineSegments(
 
 const particles = createParticles(scene);
 const controls = createControls();
+const audio = createAudio();
+const onVz = jumpSounds(audio);
 const moveCamera = createCameraRig(
   camera,
   new THREE.Vector3(ARENA_WIDTH / 2, ARENA_HEIGHT * 1.1, ARENA_HEIGHT * 1.47),
@@ -82,6 +84,7 @@ async function main() {
     byId: (code, name) => client.joinById<MyRoom>(code, { name }),
   });
   showRoomTag(room, "Cube Tag");
+  audio.play("join");
   const predict = Predict.get(room);
 
   // Other players' inputs aren't ours to predict: interpolate them toward the
@@ -143,6 +146,7 @@ async function main() {
 
   let prevIt = room.state.it;
   let last = performance.now();
+  let prevWinner = "";
   const zero = new THREE.Vector3();
 
   function frame(now: number) {
@@ -162,6 +166,7 @@ async function main() {
     if (room.state.it !== prevIt) {
       const cube = cubes.get(room.state.it);
       if (cube && prevIt) {
+        audio.play("tag", room.state.it === room.sessionId || prevIt === room.sessionId ? 1 : 0.4);
         cube.userData.pop = 1;
         for (let i = 0; i < 30; i++) {
           const v = new THREE.Vector3((Math.random() - 0.5) * 500, Math.random() * 250, (Math.random() - 0.5) * 500);
@@ -194,6 +199,11 @@ async function main() {
       }
     }
     particles.update(dt);
+
+    const me = room.state.players.get(room.sessionId);
+    if (me) { onVz(predict.value(me, "vz")); }
+    if (room.state.winner && !prevWinner) { audio.play("win"); }
+    prevWinner = room.state.winner ?? "";
 
     controls.syncKnob();
     lampEl.classList.toggle("on", room.state.it === room.sessionId);

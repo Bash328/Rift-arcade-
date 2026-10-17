@@ -344,3 +344,78 @@ export function drawBoard(
     return row;
   }));
 }
+
+export type Sfx = "jump" | "land" | "tag" | "crack" | "drop" | "fall" | "tick" | "go" | "win" | "click" | "join";
+const SFX: Sfx[] = ["jump", "land", "tag", "crack", "drop", "fall", "tick", "go", "win", "click", "join"];
+
+/**
+ * Sound effects (CC0, from public/sfx) through the Web Audio API. Browsers only
+ * allow sound after a tap or key press, so the context starts on the first one.
+ * The mute button (#mute) and the M key toggle sound, and the choice is remembered.
+ */
+export function createAudio() {
+  const muteEl = document.getElementById("mute");
+  let muted = false;
+  try { muted = localStorage.getItem("muted") === "1"; } catch { /* private mode */ }
+
+  let ctx: AudioContext | undefined;
+  const buffers = new Map<Sfx, AudioBuffer>();
+
+  const refresh = () => {
+    muteEl?.classList.toggle("off", muted);
+    muteEl?.setAttribute("aria-pressed", String(muted));
+  };
+  const toggle = () => {
+    muted = !muted;
+    try { localStorage.setItem("muted", muted ? "1" : "0"); } catch { /* private mode */ }
+    refresh();
+  };
+  refresh();
+  muteEl?.addEventListener("click", toggle);
+
+  async function load(context: AudioContext) {
+    await Promise.all(SFX.map(async (name) => {
+      try {
+        const res = await fetch(`/sfx/${name}.ogg`);
+        buffers.set(name, await context.decodeAudioData(await res.arrayBuffer()));
+      } catch { /* a browser that can't decode Ogg just plays without that sound */ }
+    }));
+  }
+  function unlock() {
+    if (!ctx) { ctx = new AudioContext(); void load(ctx); }
+    void ctx.resume();
+  }
+  for (const type of ["pointerdown", "keydown"]) { addEventListener(type, unlock, { passive: true }); }
+  addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() === "m" && (e.target as HTMLElement).tagName !== "INPUT") { toggle(); }
+  });
+  // Lobby buttons click.
+  document.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest?.(".lbtn")) { api.play("click", 0.7); }
+  });
+
+  const api = {
+    play(name: Sfx, volume = 1, rate = 1) {
+      const buffer = buffers.get(name);
+      if (muted || !ctx || ctx.state !== "running" || !buffer) { return; }
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.playbackRate.value = rate;
+      const gain = ctx.createGain();
+      gain.gain.value = Math.min(Math.max(volume, 0), 1) * 0.5;
+      source.connect(gain).connect(ctx.destination);
+      source.start();
+    },
+  };
+  return api;
+}
+
+/** Jump and landing sounds from the player's vertical speed. Call every frame. */
+export function jumpSounds(audio: ReturnType<typeof createAudio>) {
+  let prev = 0;
+  return (vz: number) => {
+    if (vz > 200 && prev <= 0) { audio.play("jump", 0.8, 0.95 + Math.random() * 0.1); }
+    else if (vz === 0 && prev < -100) { audio.play("land", 0.9); }
+    prev = vz;
+  };
+}

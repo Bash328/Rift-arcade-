@@ -670,3 +670,30 @@ button.btn {
   75% { translate: 2cqw 7cqw; }
 }
 @media (prefers-reduced-motion: reduce) { .voiddemo i, .vcube { animation: none; } }
+
+/* ---------- Sound button ---------- */
+
+.marquee-right { justify-self: end; display: flex; align-items: center; gap: 0.5rem; }
+.mute {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: #0a061359;
+  color: #fff;
+  cursor: pointer;
+}
+.mute:hover { background: #0a0613b3; }
+.mute svg { width: 1.2rem; height: 1.2rem; }
+.mute .x { display: none; }
+.mute.off .waves { display: none; }
+.mute.off .x { display: block; }
+
+@media (max-width: 700px), (max-height: 520px) {
+  .marquee-right { display: block; }
+  .mute { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto calc(max(0.5rem, env(safe-area-inset-left)) + 2.9rem); background: #050109aa; pointer-events: auto; }
+  #status { inset: 0.7rem auto auto 6.4rem; max-width: 36%; }
+}

@@ -8,7 +8,7 @@ import { PLAYER_HALF, GRAVITY } from "../shared/constants.js";
 import { stepVoidEntity, GRID, TILE, VOID_SIZE, SOLID, CRACKING, GONE } from "../shared/void.js";
 import {
   NEON_CYAN, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, type Sfx,
 } from "./kit.js";
 
 const statusEl = document.getElementById("status")!;
@@ -45,6 +45,8 @@ const slabOf = (tile: THREE.Mesh) => tile.material as THREE.MeshStandardMaterial
 
 const particles = createParticles(scene);
 const controls = createControls();
+const audio = createAudio();
+const onVz = jumpSounds(audio);
 const moveCamera = createCameraRig(
   camera,
   new THREE.Vector3(VOID_SIZE / 2, VOID_SIZE * 1.1, VOID_SIZE * 1.3),
@@ -62,6 +64,7 @@ async function main() {
     byId: (code, name) => client.joinById<VoidRoom>(code, { name }),
   });
   showRoomTag(room, "Voidfall");
+  audio.play("join");
   const predict = Predict.get(room);
 
   predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
@@ -116,6 +119,17 @@ async function main() {
 
   const zero = new THREE.Vector3();
   let last = performance.now();
+  let prevPhase = "";
+  let prevCountdown = -1;
+  let prevAlive = true;
+
+  /** Play a sound that fades with distance from my cube, so far-off tiles stay quiet. */
+  const hear = (name: Sfx, at: THREE.Vector3) => {
+    const me = cubes.get(room.sessionId)?.position;
+    if (!me) { return; }
+    const volume = Math.max(0, 1 - Math.hypot(me.x - at.x, me.z - at.z) / 500);
+    if (volume > 0.05) { audio.play(name, volume * 0.8, 0.9 + Math.random() * 0.2); }
+  };
 
   function frame(now: number) {
     const dt = Math.min((now - last) / 1000, 0.1);
@@ -131,7 +145,9 @@ async function main() {
       const tile = tileMeshes[i];
       if (state !== tile.userData.state) {
         tile.userData.state = state;
+        if (state === CRACKING) { hear("crack", tile.position); }
         if (state === GONE) {
+          hear("drop", tile.position);
           tile.userData.fallV = 0;
           for (let k = 0; k < 6; k++) {
             const v = new THREE.Vector3((Math.random() - 0.5) * 200, Math.random() * 150, (Math.random() - 0.5) * 200);
@@ -171,10 +187,20 @@ async function main() {
 
     const me = room.state.players.get(room.sessionId);
     const myCube = cubes.get(room.sessionId);
+    if (me) { onVz(predict.value(me, "vz")); }
     controls.syncKnob();
     const { phase, countdown, alive, winner } = room.state;
     lampEl.classList.toggle("on", !!me && !me.alive && (phase === "playing" || phase === "over"));
     moveCamera(me?.alive ? myCube?.position : undefined);
+
+    // Game-state sounds.
+    if (phase === "countdown" && countdown !== prevCountdown) { audio.play("tick"); }
+    if (phase === "playing" && prevPhase !== "playing") { audio.play("go"); }
+    if (phase === "over" && prevPhase !== "over") { audio.play("win", me && winner === me.name ? 1 : 0.6); }
+    if (me && prevAlive && !me.alive && phase === "playing") { audio.play("fall"); }
+    prevPhase = phase;
+    prevCountdown = countdown;
+    prevAlive = me?.alive ?? true;
 
     refreshBoard();
     statusEl.textContent =
