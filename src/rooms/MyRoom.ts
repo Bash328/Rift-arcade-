@@ -2,7 +2,7 @@ import { Room, Client, CloseCode, type StepContext } from "colyseus";
 import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { stepEntity } from "../shared/movement.js";
-import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, TAG_COOLDOWN, ROUND_SECONDS, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
+import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT, SPAWN_RADIUS, PLAYER_HALF, TAG_COOLDOWN, ROUND_SECONDS, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
@@ -46,8 +46,8 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     const n = this.joinCount++;
     const angle = n * 2.399963;
     this.state.players.set(client.sessionId, new Player({
-      x: ARENA_WIDTH / 2 + Math.cos(angle) * 80,
-      y: ARENA_HEIGHT / 2 + Math.sin(angle) * 80,
+      x: ARENA_WIDTH / 2 + Math.cos(angle) * SPAWN_RADIUS,
+      y: ARENA_HEIGHT / 2 + Math.sin(angle) * SPAWN_RADIUS,
       vx: 0,
       vy: 0,
       z: 0,

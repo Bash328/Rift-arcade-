@@ -7,7 +7,7 @@ import { MyRoomState, type MoveInput } from "../src/rooms/schema/MyRoomState.js"
 import { stepEntity } from "../src/shared/movement.js";
 import { stepVoidEntity, tileAt, GRID, GONE, SOLID } from "../src/shared/void.js";
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
-import { ARENA_WIDTH, ARENA_HEIGHT, OBSTACLES, PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
+import { ARENA_WIDTH, ARENA_HEIGHT, OBSTACLES, PLAYER_SPEED, TICK_RATE, PETS, SPAWN_RADIUS } from "../src/shared/constants.js";
 
 describe("testing your Colyseus app", () => {
   let colyseus: ColyseusTestServer<typeof appConfig>;
@@ -95,11 +95,11 @@ describe("testing your Colyseus app", () => {
   });
 
   it("stops at a pillar and slides along its face", () => {
-    // Corner block at (230, 170), half-extent 40: its left face is x=190, so a player (half 12) stops at 178.
-    const e = { x: 177, y: 170, vx: 0, vy: 0, z: 0, vz: 0 };
+    // Corner fortress at (290, 210), half-extent 45: its left face is x=245, so a player (half 12) stops at 233.
+    const e = { x: 232, y: 210, vx: 0, vy: 0, z: 0, vz: 0 };
     stepEntity(e, { moveX: 1, moveY: 1, jump: 0 }, 1 / TICK_RATE);
-    assert.strictEqual(e.x, 177, "blocked on x");
-    assert.ok(e.y > 170, "still slides on y");
+    assert.strictEqual(e.x, 232, "blocked on x");
+    assert.ok(e.y > 210, "still slides on y");
   });
 
   it("keeps every gap passable and the spawn area clear", () => {
@@ -112,10 +112,10 @@ describe("testing your Colyseus app", () => {
         const gap = Math.max(Math.abs(a.x - b.x) - a.hw - b.hw, Math.abs(a.y - b.y) - a.hh - b.hh);
         assert.ok(gap >= MIN_GAP, `obstacles at (${a.x},${a.y}) and (${b.x},${b.y}) leave a ${gap} gap`);
       }
-      // The spawn ring has radius 80 around the center, plus half a cube.
+      // The spawn ring around the middle, plus half a cube.
       const cx = Math.max(Math.abs(ARENA_WIDTH / 2 - a.x) - a.hw, 0);
       const cy = Math.max(Math.abs(ARENA_HEIGHT / 2 - a.y) - a.hh, 0);
-      assert.ok(Math.hypot(cx, cy) > 92, `obstacle ${i} overlaps the spawn ring`);
+      assert.ok(Math.hypot(cx, cy) > SPAWN_RADIUS + 12, `obstacle ${i} overlaps the spawn ring`);
     }
   });
 
@@ -124,7 +124,7 @@ describe("testing your Colyseus app", () => {
     const idle = { moveX: 0, moveY: 0, jump: 0 };
 
     // Flat ground in the spawn area: leave the floor, peak, come back down.
-    const e = { x: 600, y: 450, vx: 0, vy: 0, z: 0, vz: 0 };
+    const e = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2, vx: 0, vy: 0, z: 0, vz: 0 };
     stepEntity(e, { ...idle, jump: 1 }, dt);
     assert.ok(e.z > 0, "left the ground");
     let apex = e.z;
@@ -132,18 +132,18 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(e.z, 0, "landed");
     assert.ok(apex > 55 && apex < 80, `apex ${apex}: clears 50-high steps, not 80-high blocks`);
 
-    // A step (230, 275, h40): a falling player comes to rest on top of it.
-    const s = { x: 230, y: 275, vx: 0, vy: 0, z: 60, vz: 0 };
+    // A step (290, 330, h40): a falling player comes to rest on top of it.
+    const s = { x: 290, y: 330, vx: 0, vy: 0, z: 60, vz: 0 };
     for (let i = 0; i < 30; i++) { stepEntity(s, idle, dt); }
     assert.strictEqual(s.z, 40);
 
-    // The corner block (230, 170, h80) stops a grounded player but not one above it.
-    const low = { x: 177, y: 170, vx: 0, vy: 0, z: 0, vz: 0 };
+    // The corner fortress (290, 210, h80) stops a grounded player but not one above it.
+    const low = { x: 232, y: 210, vx: 0, vy: 0, z: 0, vz: 0 };
     stepEntity(low, { ...idle, moveX: 1 }, dt);
-    assert.strictEqual(low.x, 177, "blocked from the ground");
-    const high = { x: 177, y: 170, vx: 0, vy: 0, z: 85, vz: 0 };
+    assert.strictEqual(low.x, 232, "blocked from the ground");
+    const high = { x: 232, y: 210, vx: 0, vy: 0, z: 85, vz: 0 };
     stepEntity(high, { ...idle, moveX: 1 }, dt);
-    assert.ok(high.x > 177, "walks over it from above");
+    assert.ok(high.x > 232, "walks over it from above");
   });
 
   it("uses a 4-letter code as the room id, and keeps private rooms out of quick play", async () => {

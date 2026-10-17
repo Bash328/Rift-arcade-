@@ -5,7 +5,7 @@ import type { default as server } from "../app.config.js";
 import type { MoveInput } from "../rooms/schema/MyRoomState.js";
 import type { MyRoom } from "../rooms/MyRoom.js";
 import { stepEntity } from "../shared/movement.js";
-import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, OBSTACLES } from "../shared/constants.js";
+import { ARENA_WIDTH, ARENA_HEIGHT, SPAWN_RADIUS, PLAYER_HALF, OBSTACLES } from "../shared/constants.js";
 import {
   NEON_CYAN, NEON_PINK, createStage, neonBox, createParticles, createControls,
   runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, gameReady, showFatal, SHADOW_MAP,
@@ -29,7 +29,7 @@ sun.position.set(ARENA_WIDTH / 2 + 350, 900, ARENA_HEIGHT / 2 + 350);
 sun.target.position.set(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
-Object.assign(sun.shadow.camera, { left: -900, right: 900, top: 750, bottom: -750, near: 1, far: 2500 });
+Object.assign(sun.shadow.camera, { left: -1150, right: 1150, top: 950, bottom: -950, near: 1, far: 3000 });
 scene.add(sun, sun.target);
 
 // Floating slab with a low rim wall around the playable area.
@@ -49,7 +49,7 @@ for (const o of OBSTACLES) {
 
 // Glowing ring marking the spawn area in the middle.
 const ring = new THREE.Mesh(
-  new THREE.RingGeometry(100, 104, 64),
+  new THREE.RingGeometry(SPAWN_RADIUS - 2, SPAWN_RADIUS + 2, 96),
   new THREE.MeshBasicMaterial({ color: NEON_CYAN, side: THREE.DoubleSide }),
 );
 ring.rotation.x = -Math.PI / 2;
