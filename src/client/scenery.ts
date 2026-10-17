@@ -20,6 +20,7 @@ function texture(name: string, draw: (g: CanvasRenderingContext2D, s: number) =>
     tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = 4; // the texture is seen at a glancing angle: keeps thin lines from shimmering
     textures.set(name, tex);
   }
   return tex;
@@ -109,8 +110,11 @@ export function skinObstacle(parent: THREE.Object3D, o: Obstacle, theme: ArenaTh
     // Dark tech block with a glowing cap; the cap sits inside the top face.
     const m = texturedBox(w, h, d, texture("panel", paintPanel), 0xffffff, 100);
     m.position.y = h / 2;
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(w - 2, 1.5, d - 2), new THREE.MeshBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.45 }));
-    cap.position.y = h - 0.75;
+    // A flat glowing plate just above the top face. It used to be a thin box whose top sat exactly on the
+    // block's top, and the two surfaces fought over the pixels (the stripes seen on the block tops).
+    const cap = new THREE.Mesh(new THREE.PlaneGeometry(w - 4, d - 4), new THREE.MeshBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.45, depthWrite: false }));
+    cap.rotation.x = -Math.PI / 2;
+    cap.position.y = h + 0.4;
     g.add(m, cap);
   } else {
     // Maze: tall walls are hedges, the low ones you can vault are stone.

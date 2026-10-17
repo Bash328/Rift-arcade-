@@ -1,7 +1,7 @@
 import { Room, Client, CloseCode, type StepContext } from "colyseus";
 import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
-import { inputBudget } from "./inputPacing.js";
+import { InputPacer } from "./inputPacing.js";
 import { stepEntity } from "../shared/movement.js";
 import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
@@ -43,6 +43,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   private botWait = 0;
   private botCount = 0;
   private bots = new Map<string, BotBrain>();
+  private pacers = new Map<string, InputPacer>();
 
   messages = {
     // movement arrives through the input buffer above — register handlers here
@@ -94,6 +95,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   }
 
   private removePlayer(id: string) {
+    this.pacers.delete(id);
     this.state.players.delete(id);
     if (this.state.it === id) {
       this.state.it = this.state.players.keys().next().value ?? "";
@@ -114,10 +116,17 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       const channel = this.inputs.get(sessionId);
       if (!channel) { continue; }
 
-      let budget = inputBudget(channel.size);
+      let pacer = this.pacers.get(sessionId);
+      if (!pacer) { pacer = new InputPacer(); this.pacers.set(sessionId, pacer); }
+      const { drop, apply } = pacer.plan(channel.size);
+      let dropped = 0;
+      let applied = 0;
+      if (drop + apply === 0) { continue; }
       for (const input of channel) {
+        // Pulling an input consumes it, so every pulled one is either dropped or applied; stop right after the last.
+        if (dropped < drop) { dropped++; if (dropped >= drop && apply === 0) { break; } continue; } // stale: the player moved on during a stall
         stepEntity(player, input, ctx.dt, this.arena);
-        if (--budget <= 0) { break; } // the rest stay buffered for the next tick
+        if (++applied >= apply) { break; } // the rest stay buffered for the next tick
       }
     }
 
@@ -212,7 +221,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
             if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
           }
         }
-        const idle = Math.random() < 0.12;
+        const idle = Math.random() < 0.04;
         brain.dirX = idle || Math.abs(vx) < 20 ? 0 : Math.sign(vx);
         brain.dirY = idle || Math.abs(vy) < 20 ? 0 : Math.sign(vy);
       }
@@ -221,7 +230,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       brain.stuckClock += dt;
       if (brain.stuckClock >= 0.5) {
         const moved = Math.hypot(bot.x - brain.lastX, bot.y - brain.lastY);
-        if (moved < 15 && (brain.dirX || brain.dirY)) {
+        if (moved < 8 && (brain.dirX || brain.dirY)) {
           brain.unstick = 0.5;
           brain.altX = Math.floor(Math.random() * 3) - 1;
           brain.altY = Math.floor(Math.random() * 3) - 1;

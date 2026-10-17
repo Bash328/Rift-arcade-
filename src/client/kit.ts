@@ -26,7 +26,7 @@ export function createStage(arenaEl: HTMLElement) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(960, 720, false); // CSS sizes the canvas to its cabinet screen
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = LITE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap; // hard-edged shadows are cheaper on phones
   arenaEl.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -79,6 +79,7 @@ export function createStage(arenaEl: HTMLElement) {
     composer.setPixelRatio(ratio);
     renderer.setSize(w, h, false);
     composer.setSize(w, h);
+    if (LITE) { bloom.setSize(w / 2, h / 2); } // a quarter of the pixels to blur; the glow stays soft
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     composer.render(); // so the arena shows behind the lobby before the game loop starts
@@ -95,6 +96,8 @@ export function createStage(arenaEl: HTMLElement) {
     else if (frameMs < 20) { fast++; slow = 0; }
     else { slow = 0; fast = 0; }
     if (slow >= 60 && scale > 0.5) { scale = Math.max(0.5, scale * 0.85); slow = 0; resize(); }
+    // Still slow at the lowest resolution: give up the glow for the rest of the session.
+    else if (slow >= 60 && bloom.enabled) { bloom.enabled = false; slow = 0; }
     else if (fast >= 600 && scale < 1) { scale = Math.min(1, scale * 1.1); fast = 0; resize(); }
   }
 
@@ -638,14 +641,25 @@ export function createFullscreen() {
   });
   // Typing a name opens the on-screen keyboard. Keep the page on the part of the
   // screen that is still visible, instead of letting the browser pan it away.
+  // Only while a field is focused: pulling down the notification shade also shrinks the
+  // visual viewport, and if its "back to full size" event is missed the page stays squashed.
   const viewport = window.visualViewport;
   if (viewport) {
     const fit = () => {
-      root.style.setProperty("--vv-top", `${viewport.offsetTop}px`);
-      root.style.setProperty("--vv-height", `${viewport.height}px`);
+      if (document.activeElement?.tagName === "INPUT") {
+        root.style.setProperty("--vv-top", `${viewport.offsetTop}px`);
+        root.style.setProperty("--vv-height", `${viewport.height}px`);
+      } else {
+        root.style.removeProperty("--vv-top");
+        root.style.removeProperty("--vv-height");
+      }
     };
-    viewport.addEventListener("resize", fit);
+    // Re-check after anything that can change the screen size, and once more after it settles.
+    const refit = () => { fit(); setTimeout(fit, 300); };
+    viewport.addEventListener("resize", refit);
     viewport.addEventListener("scroll", fit);
+    for (const type of ["resize", "orientationchange", "pageshow", "focusout", "fullscreenchange"]) { addEventListener(type, refit); }
+    document.addEventListener("visibilitychange", refit);
     fit();
   }
   document.addEventListener("focusin", (e) => {

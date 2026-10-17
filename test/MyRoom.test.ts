@@ -9,7 +9,7 @@ import { stepVoidEntity, tileAt, GRID, GONE, SOLID } from "../src/shared/void.js
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
 import { PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
 import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
-import { inputBudget } from "../src/rooms/inputPacing.js";
+import { inputBudget, InputPacer, MAX_BACKLOG } from "../src/rooms/inputPacing.js";
 import { sanitizeName, FALLBACK_NAME } from "../src/shared/names.js";
 
 const classic = ARENA_BY_ID.classic;
@@ -340,7 +340,7 @@ describe("testing your Colyseus app", () => {
     const input = a.input<MoveInput>({ mode: "reliable" });
     const player = room.state.players.get(a.sessionId);
     const step = PLAYER_SPEED / TICK_RATE; // distance of one input
-    const BURST = 12;
+    const BURST = MAX_BACKLOG; // a bigger pile-up has its oldest inputs dropped (see the pacer test)
 
     await room.waitForNextTimestep();
     const startX = player.x;
@@ -404,5 +404,31 @@ describe("testing your Colyseus app", () => {
     (priv as any).botWait = 100;
     for (let i = 0; i < 10; i++) { await priv.waitForNextTimestep(); }
     assert.strictEqual(priv.state.players.size, 1, "private rooms never get bots");
+  });
+
+  it("input pacing: a flood cannot move faster than the cap, and a long stall's old inputs are dropped", () => {
+    // A client sending two inputs per tick for ten seconds: the steps applied stay near one per tick.
+    const flood = new InputPacer();
+    let pending = 0;
+    let applied = 0;
+    const TICKS = 300;
+    for (let t = 0; t < TICKS; t++) {
+      pending += 2;
+      const { drop, apply } = flood.plan(pending);
+      pending -= drop + apply;
+      applied += apply;
+    }
+    assert.ok(applied <= TICKS * 1.1 + 3, `applied ${applied} steps in ${TICKS} ticks`);
+    assert.ok(pending <= MAX_BACKLOG + 2, `backlog stays bounded (${pending})`);
+
+    // Normal play: one input a tick is always applied.
+    const calm = new InputPacer();
+    for (let t = 0; t < 50; t++) { assert.deepStrictEqual(calm.plan(1), { drop: 0, apply: 1 }); }
+
+    // A 20-input pile-up after a stall: the oldest are dropped down to the allowed backlog.
+    const stall = new InputPacer();
+    const plan = stall.plan(20);
+    assert.strictEqual(plan.drop, 20 - MAX_BACKLOG);
+    assert.ok(plan.apply >= 1 && plan.apply <= 2);
   });
 });

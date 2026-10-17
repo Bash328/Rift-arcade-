@@ -2,7 +2,7 @@ import { Room, Client, type StepContext } from "colyseus";
 import { VoidState, VoidPlayer } from "./schema/VoidState.js";
 import { MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
-import { inputBudget } from "./inputPacing.js";
+import { InputPacer } from "./inputPacing.js";
 import { sanitizeName } from "../shared/names.js";
 import { TICK_RATE, PETS } from "../shared/constants.js";
 import {
@@ -36,6 +36,7 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private fell: string[] = [];
   /** Consecutive ticks each player has sent no input. */
   private quiet = new Map<string, number>();
+  private pacers = new Map<string, InputPacer>();
 
   async onCreate(options: any) {
     assertRoomCapacity();
@@ -70,6 +71,7 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.quiet.delete(client.sessionId);
+    this.pacers.delete(client.sessionId);
   }
 
   /** Put every living player on an even ring around the middle of the grid. */
@@ -90,11 +92,15 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
       if (!p.alive) { continue; }
       let stepped = 0;
       const channel = this.inputs.get(sessionId);
-      let budget = inputBudget(channel?.size ?? 0);
-      for (const input of channel ?? []) {
+      let pacer = this.pacers.get(sessionId);
+      if (!pacer) { pacer = new InputPacer(); this.pacers.set(sessionId, pacer); }
+      const { drop, apply } = pacer.plan(channel?.size ?? 0);
+      let dropped = 0;
+      for (const input of drop + apply === 0 ? [] : channel ?? []) {
+        // Pulling an input consumes it, so every pulled one is either dropped or applied; stop right after the last.
+        if (dropped < drop) { dropped++; if (dropped >= drop && apply === 0) { break; } continue; } // stale: the player moved on during a stall
         stepVoidEntity(p, input, ctx.dt, s.tiles);
-        stepped++;
-        if (--budget <= 0) { break; } // the rest stay buffered for the next tick
+        if (++stepped >= apply) { break; } // the rest stay buffered for the next tick
       }
 
       // Inputs are the clock, so a player who stops sending them (a backgrounded

@@ -384,7 +384,9 @@ async function main() {
     // Drives prediction, interpolation and the reconciler, and returns how many
     // fixed steps came due - so input rate follows the simulation rate, not the
     // monitor's refresh rate.
-    const steps = predict.tick(now);
+    // After the tab was hidden or the phone stalled, the clock reports a pile of due steps; sending them all
+    // at once would trip the server's message limit, so send a few (one right after a long stall).
+    const steps = Math.min(predict.tick(now), frameMs > 500 ? 1 : 3);
 
     for (let i = 0; i < steps; i++) {
       Object.assign(input.data, controls.read());

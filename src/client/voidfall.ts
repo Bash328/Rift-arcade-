@@ -155,7 +155,9 @@ async function main() {
     last = now;
     adaptQuality(frameMs);
     debug.frame(frameMs);
-    const steps = predict.tick(now);
+    // After the tab was hidden or the phone stalled, the clock reports a pile of due steps; sending them all
+    // at once would trip the server's message limit, so send a few (one right after a long stall).
+    const steps = Math.min(predict.tick(now), frameMs > 500 ? 1 : 3);
     for (let i = 0; i < steps; i++) {
       Object.assign(input.data, controls.read());
       input.send();
