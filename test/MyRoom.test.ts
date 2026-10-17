@@ -11,6 +11,7 @@ import { PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
 import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
 import { inputBudget, InputPacer, MAX_BACKLOG } from "../src/rooms/inputPacing.js";
 import { sanitizeName, FALLBACK_NAME } from "../src/shared/names.js";
+import { Nav } from "../src/rooms/botNav.js";
 
 const classic = ARENA_BY_ID.classic;
 /** The layouts are drawn for a 1500-wide arena; block positions scale with the real width (sizes do not). */
@@ -530,5 +531,27 @@ describe("testing your Colyseus app", () => {
     await colyseus.connectTo(locked, { name: "A" });
     (locked as any).endRound();
     assert.strictEqual(locked.state.nextMode, "orbs", "a host-locked mode stays");
+  });
+
+  it("bot navigation: from the middle of every arena, every corner is reachable, and each step leads closer", () => {
+    for (const arena of ARENAS) {
+      const nav = new Nav(arena);
+      const cx = arena.width / 2, cy = arena.height / 2;
+      for (const [tx, ty] of [[80, 80], [arena.width - 80, 80], [80, arena.height - 80], [arena.width - 80, arena.height - 80]]) {
+        const dist = nav.distancesTo(tx, ty);
+        const step = nav.step(dist, cx, cy, true);
+        assert.ok(step, `${arena.id}: the middle is on the grid`);
+        assert.ok(step.vx || step.vy, `${arena.id}: a way to (${tx}, ${ty})`);
+        // Walk it: one cell per step along the suggested direction, until there.
+        let x = cx, y = cy;
+        let steps = 0;
+        while (Math.hypot(x - tx, y - ty) > 40 && steps++ < 400) {
+          const s = nav.step(dist, x, y, true);
+          if (!s) { break; }
+          x += Math.sign(s.vx) * 25; y += Math.sign(s.vy) * 25;
+        }
+        assert.ok(Math.hypot(x - tx, y - ty) <= 40, `${arena.id}: walked to (${tx}, ${ty}) in ${steps} steps`);
+      }
+    }
   });
 });

@@ -7,6 +7,7 @@ import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, PETS } from "../
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
 import { MODES, modeOf, ORB_REACH, ORB_HEIGHT } from "../shared/modes.js";
 import { sanitizeName } from "../shared/names.js";
+import { navFor } from "./botNav.js";
 
 /** Public rooms are topped up with bots to this many players, so nobody waits alone. */
 const BOT_FILL = 4;
@@ -19,7 +20,7 @@ const IDLE_INPUT = { moveX: 0, moveY: 0, jump: 0 };
 const BOT_NAMES = ["Pip", "Moss", "Dot", "Bolt", "Zig", "Fizz", "Nova", "Taco"];
 
 /** What a bot is doing: how it steers, and a stuck check that makes it hop and turn. */
-interface BotBrain { dirX: number; dirY: number; retarget: number; stuckClock: number; lastX: number; lastY: number; unstick: number; altX: number; altY: number; scatter: number }
+interface BotBrain { dirX: number; dirY: number; retarget: number; stuckClock: number; lastX: number; lastY: number; unstick: number; altX: number; altY: number; scatter: number; jump: boolean; target: string; targetSince: number; skip: Set<string> }
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
@@ -291,7 +292,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       pet: slot % PETS.length,
       hot: false,
     }));
-    this.bots.set(id, { dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0, scatter: NaN });
+    this.bots.set(id, { dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0, scatter: NaN, jump: false, target: "", targetSince: 0, skip: new Set() });
     if (this.state.mode === "tag" && !this.state.it) { this.setIt(id); }
   }
 
@@ -321,31 +322,58 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
         const moved = Math.hypot(bot.x - brain.lastX, bot.y - brain.lastY);
         if (moved < 8 && (brain.dirX || brain.dirY)) {
           brain.unstick = 0.5;
-          brain.altX = Math.floor(Math.random() * 3) - 1;
-          brain.altY = Math.floor(Math.random() * 3) - 1;
+          // Hop the way it was going (gets it over a low block), or sideways along whatever is in the way, or at random.
+          const roll = Math.random();
+          if (roll < 0.4) { brain.altX = brain.dirX; brain.altY = brain.dirY; }
+          else if (roll < 0.7) { const side = Math.random() < 0.5 ? 1 : -1; brain.altX = -brain.dirY * side; brain.altY = brain.dirX * side; }
+          else { brain.altX = Math.floor(Math.random() * 3) - 1; brain.altY = Math.floor(Math.random() * 3) - 1; }
         }
         brain.lastX = bot.x; brain.lastY = bot.y; brain.stuckClock = 0;
       }
       const hopping = brain.unstick > 0;
       brain.unstick = Math.max(0, brain.unstick - dt);
       const command = this.overLeft > 0 ? IDLE_INPUT // the winner is showing: bots stop too
-        : hopping ? { moveX: brain.altX, moveY: brain.altY, jump: 1 } : { moveX: brain.dirX, moveY: brain.dirY, jump: 0 };
+        : hopping ? { moveX: brain.altX, moveY: brain.altY, jump: 1 } : { moveX: brain.dirX, moveY: brain.dirY, jump: brain.jump ? 1 : 0 };
       stepEntity(bot, command, dt, arena);
     }
   }
 
-  /** Where a bot wants to go, as a direction (it is quantised to the -1/0/1 inputs a player has). */
+  /**
+   * Where a bot wants to go, as a direction (it is quantised to the -1/0/1 inputs a player has).
+   * Walls are handled by a coarse grid of the arena (see botNav.ts): the bot steps along the shortest way
+   * to its target, or away from the player chasing it, and jumps where the way crosses a low block.
+   */
   private steer(id: string, bot: Player, brain: BotBrain): [number, number] {
     const arena = this.arena;
+    const nav = navFor(arena);
+    brain.jump = false;
     let vx = 0, vy = 0;
 
+    /** Along the grid toward (x, y), or straight at it if the bot is not on the grid. */
+    const toward = (x: number, y: number): [number, number] => {
+      const step = nav.step(nav.distancesTo(x, y), bot.x, bot.y, true);
+      if (!step) { return [x - bot.x, y - bot.y]; }
+      brain.jump = step.hop;
+      return [step.vx, step.vy];
+    };
+
     if (this.state.mode === "orbs") {
-      // The nearest orb on the ground (bots do not plan jumps onto blocks).
+      // The nearest orb, on the ground or on a block, skipping any this bot has chased for too long without getting it.
+      for (const skipped of brain.skip) { if (!this.state.orbs.has(skipped)) { brain.skip.delete(skipped); } }
       let best = Infinity;
-      for (const orb of this.state.orbs.values()) {
+      let target = "";
+      for (const [orbId, orb] of this.state.orbs) {
         const d = Math.hypot(orb.x - bot.x, orb.y - bot.y);
-        if (orb.z === 0 && d < best) { best = d; vx = orb.x - bot.x; vy = orb.y - bot.y; }
+        if (d < best && !brain.skip.has(orbId)) { best = d; target = orbId; }
       }
+      const orb = this.state.orbs.get(target);
+      if (!orb) { return [0, 0]; }
+      const now = Date.now();
+      if (target !== brain.target) { brain.target = target; brain.targetSince = now; }
+      else if (now - brain.targetSince > 8000) { brain.skip.add(target); brain.target = ""; } // cannot get it: try another
+      [vx, vy] = toward(orb.x, orb.y);
+      // Keep jumping once close to an orb that floats over a block, so the bot lands on top.
+      if (orb.z > bot.z + 5 && best < 130) { brain.jump = true; }
       return [vx, vy];
     }
 
@@ -356,13 +384,23 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       const protectedId = this.safeLeft > 0 ? this.safeId : "";
       for (const skip of [protectedId, ""]) {
         let best = Infinity;
+        let target: Player | undefined;
         for (const [otherId, other] of this.state.players) {
           const d = Math.hypot(other.x - bot.x, other.y - bot.y);
-          if (otherId !== id && otherId !== skip && !other.hot && d < best) { best = d; vx = other.x - bot.x; vy = other.y - bot.y; }
+          if (otherId !== id && otherId !== skip && !other.hot && d < best) { best = d; target = other; }
         }
-        if (best < Infinity) { break; } // with only two players the protected one is the only target
+        if (target) { // with only two players the protected one is the only target
+          let [cx, cy] = toward(target.x, target.y);
+          // Several chasers going for the same player would end up as one stacked blob: keep a little apart.
+          for (const [otherId, other] of this.state.players) {
+            if (otherId === id || !other.hot) { continue; }
+            const gap = Math.hypot(bot.x - other.x, bot.y - other.y);
+            if (gap < 70) { cx += ((bot.x - other.x) / (gap || 1)) * 80; cy += ((bot.y - other.y) / (gap || 1)) * 80; }
+          }
+          return [cx, cy];
+        }
       }
-      return [vx, vy];
+      return [0, 0];
     }
 
     let threat: Player | undefined;
@@ -372,15 +410,23 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       if (other.hot && d < nearest) { nearest = d; threat = other; }
     }
     if (threat && nearest < 450) {
-      vx = bot.x - threat.x; vy = bot.y - threat.y;
-      // Standing on top of a chaser gives no direction to run: pick one at random and keep it until clear.
-      if (nearest < 40) {
-        if (Number.isNaN(brain.scatter)) { brain.scatter = Math.random() * Math.PI * 2; }
-        vx = Math.cos(brain.scatter) * 100; vy = Math.sin(brain.scatter) * 100;
-      } else { brain.scatter = NaN; }
-      const edge = 160; // steer back toward the middle when near a wall
-      if (bot.x < edge || bot.x > arena.width - edge) { vx += (arena.width / 2 - bot.x) * 2; }
-      if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
+      const step = nearest < 40 ? null : nav.step(nav.distancesTo(threat.x, threat.y), bot.x, bot.y, false);
+      if (step && (step.vx || step.vy)) {
+        // The way that gets furthest from the chaser by the shortest route around the walls.
+        vx = step.vx; vy = step.vy;
+        brain.jump = step.hop;
+        brain.scatter = NaN;
+      } else {
+        vx = bot.x - threat.x; vy = bot.y - threat.y;
+        // Standing on top of a chaser gives no direction to run: pick one at random and keep it until clear.
+        if (nearest < 40) {
+          if (Number.isNaN(brain.scatter)) { brain.scatter = Math.random() * Math.PI * 2; }
+          vx = Math.cos(brain.scatter) * 100; vy = Math.sin(brain.scatter) * 100;
+        } else { brain.scatter = NaN; }
+        const edge = 160; // steer back toward the middle when near a wall
+        if (bot.x < edge || bot.x > arena.width - edge) { vx += (arena.width / 2 - bot.x) * 2; }
+        if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
+      }
     }
     // Don't pile up on another runner (even when nobody is chasing): bots on top of each other look like one glitching cube.
     for (const [otherId, other] of this.state.players) {
