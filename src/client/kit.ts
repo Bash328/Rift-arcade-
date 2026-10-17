@@ -32,22 +32,14 @@ export function createStage(arenaEl: HTMLElement) {
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x120826, 0.0004);
 
-  // Screen-space gradient sky.
-  {
-    const c = document.createElement("canvas");
-    c.width = 2; c.height = 256;
-    const g = c.getContext("2d")!;
-    const grad = g.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0, "#05020f");
-    grad.addColorStop(0.55, "#3b0f5c");
-    grad.addColorStop(1, "#0a0418");
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 2, 256);
-    const sky = new THREE.CanvasTexture(c);
-    sky.colorSpace = THREE.SRGBColorSpace;
-    scene.background = sky;
-  }
-  scene.add(new THREE.HemisphereLight(0x8a6cff, 0x120826, 1.6));
+  // Screen-space gradient sky; `look` repaints it per arena.
+  const skyCanvas = document.createElement("canvas");
+  skyCanvas.width = 2; skyCanvas.height = 256;
+  const sky = new THREE.CanvasTexture(skyCanvas);
+  sky.colorSpace = THREE.SRGBColorSpace;
+  scene.background = sky;
+  const hemi = new THREE.HemisphereLight(0x8a6cff, 0x120826, 1.6);
+  scene.add(hemi);
 
   const camera = new THREE.PerspectiveCamera(50, 4 / 3, 1, 4000);
 
@@ -57,8 +49,24 @@ export function createStage(arenaEl: HTMLElement) {
     new THREE.WebGLRenderTarget(960, 720, { type: THREE.HalfFloatType, samples: LITE ? 2 : 4 }),
   );
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(960, 720), 0.9, 0.5, 0.7));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(960, 720), 0.9, 0.5, 0.7);
+  composer.addPass(bloom);
   composer.addPass(new OutputPass());
+
+  /** Sky gradient (top, middle, bottom), hemisphere light (sky, ground, intensity) and bloom threshold; omitted = the purple neon default. */
+  function look(l: { sky?: [string, string, string]; hemi?: [number, number, number]; bloom?: number } = {}) {
+    const g = skyCanvas.getContext("2d")!;
+    const [top, mid, bottom] = l.sky ?? ["#05020f", "#3b0f5c", "#0a0418"];
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, top); grad.addColorStop(0.55, mid); grad.addColorStop(1, bottom);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 2, 256);
+    sky.needsUpdate = true;
+    const [h1, h2, hi] = l.hemi ?? [0x8a6cff, 0x120826, 1.6];
+    hemi.color.set(h1); hemi.groundColor.set(h2); hemi.intensity = hi;
+    bloom.threshold = l.bloom ?? 0.7;
+  }
+  look();
 
   /** Render scale: drops on a device that can't keep up, and recovers when it can. */
   let scale = 1;
@@ -90,7 +98,7 @@ export function createStage(arenaEl: HTMLElement) {
     else if (fast >= 600 && scale < 1) { scale = Math.min(1, scale * 1.1); fast = 0; resize(); }
   }
 
-  return { renderer, scene, camera, composer, adaptQuality, renderScale: () => scale };
+  return { renderer, scene, camera, composer, adaptQuality, renderScale: () => scale, look };
 }
 
 /** A dark solid box with glowing edges. Sim (x, y) maps to world (x, z). */

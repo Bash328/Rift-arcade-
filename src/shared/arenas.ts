@@ -19,6 +19,13 @@ export interface ArenaTheme {
   block: number;
   /** Distance fog colour. */
   fog: number;
+  /** Surface painted over the floor; plain neon grid when absent. */
+  floor?: "moon" | "ice";
+  /** Optional lighting overrides; omitted = the purple neon default. */
+  sky?: [string, string, string];
+  hemi?: [number, number, number];
+  sun?: [number, number];
+  bloom?: number;
 }
 
 export interface Arena {
@@ -90,7 +97,8 @@ const MOON: Arena = {
   blurb: "Low gravity: leap across the map and perch on tall mesas.",
   width: W, height: H, spawnRadius: 170,
   gravity: 0.45, jump: 1, slide: 0, roundSeconds: 90,
-  theme: { edge: 0xb98cff, rim: 0xffb23f, grid: 0x7a5cff, slab: 0x0d0a22, block: 0x1b1440, fog: 0x1a0a3a },
+  theme: { edge: 0xb98cff, rim: 0xffb23f, grid: 0x7a5cff, slab: 0x0d0a22, block: 0x6b6878, fog: 0x07070d, floor: "moon",
+    sky: ["#000005", "#02020a", "#0a0a14"], hemi: [0x9aa0b4, 0x1a1a22, 0.6], sun: [0xfff6e8, 3] },
   obstacles: mirrored([
     { x: 240, y: 220, hw: 70, hh: 70, h: 110 },  // wide mesa: reachable from the ground
     { x: 240, y: 420, hw: 26, hh: 26, h: 240 },  // spire: needs a hop from a mesa first
@@ -129,7 +137,8 @@ const ICE: Arena = {
   blurb: "Slippery floor: commit to every turn and use the walls to stop.",
   width: W, height: H, spawnRadius: 170,
   gravity: 1, jump: 1, slide: 0.4, roundSeconds: 90,
-  theme: { edge: 0x9fe9ff, rim: 0xffffff, grid: 0x6fd0ff, slab: 0x0a1a2e, block: 0x14304f, fog: 0x0a1a30 },
+  theme: { edge: 0x9fe9ff, rim: 0xffffff, grid: 0x6fd0ff, slab: 0x0a1a2e, block: 0x8fd0f2, fog: 0x4f7ea3, floor: "ice",
+    sky: ["#071a33", "#1b4a73", "#9fd0ea"], hemi: [0xbfe6ff, 0x405870, 1], sun: [0xdff3ff, 1.6], bloom: 0.9 },
   obstacles: mirrored([
     { x: 250, y: 230, hw: 40, hh: 40, h: 70 },
     { x: 560, y: 160, hw: 26, hh: 26, h: 70 },

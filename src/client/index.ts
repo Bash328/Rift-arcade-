@@ -1,6 +1,7 @@
 import { ColyseusSDK, Callbacks } from "@colyseus/sdk";
 import { Predict } from "@colyseus/sdk/predict";
 import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { default as server } from "../app.config.js";
 import type { MoveInput } from "../rooms/schema/MyRoomState.js";
 import type { MyRoom } from "../rooms/MyRoom.js";
@@ -8,7 +9,7 @@ import { stepEntity } from "../shared/movement.js";
 import { PLAYER_HALF } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
 import {
-  createStage, neonBox, createParticles, createControls,
+  createStage, neonBox, loadFx, createParticles, createControls,
   runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, SHADOW_MAP,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
@@ -22,7 +23,7 @@ const client = new ColyseusSDK<typeof server>(
   `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`
 );
 
-const { scene, camera, composer, renderer, adaptQuality, renderScale } = createStage(arenaEl);
+const { scene, camera, composer, renderer, adaptQuality, renderScale, look } = createStage(arenaEl);
 const debug = createDebugHud(arenaEl, renderer, renderScale);
 
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -34,6 +35,116 @@ scene.add(sun, sun.target);
 const arenaGroup = new THREE.Group();
 scene.add(arenaGroup);
 let shownArena = "";
+
+// Painted once and kept: arena swaps only dispose geometry and materials, not these.
+const floorTextures = new Map<string, THREE.Texture>();
+let iceEnv: THREE.Texture | undefined;
+let starSprite: THREE.Texture | undefined;
+let earthTexture: THREE.Texture | undefined;
+
+/** Black sky: a scatter of stars and the Earth hanging behind the arena. */
+function addMoonSky(parent: THREE.Object3D, W: number, H: number) {
+  const pts = new Float32Array(3 * (LITE ? 300 : 700));
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pts.length; i += 3) {
+    v.randomDirection(); v.y = Math.abs(v.y) * 0.7 + 0.15;
+    v.multiplyScalar(2200).add(new THREE.Vector3(W / 2, 0, H / 2)).toArray(pts, i);
+  }
+  starSprite ??= loadFx("star_04");
+  const stars = new THREE.Points(
+    new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(pts, 3)),
+    new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, map: starSprite, transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }),
+  );
+  stars.frustumCulled = false;
+  parent.add(stars);
+
+  if (!earthTexture) {
+    const c = document.createElement("canvas");
+    c.width = 256; c.height = 128;
+    const g = c.getContext("2d")!;
+    g.fillStyle = "#1f5fbf"; g.fillRect(0, 0, 256, 128);
+    for (let i = 0; i < 14; i++) { g.fillStyle = "#3f9a5a"; g.beginPath(); g.ellipse(Math.random() * 256, 20 + Math.random() * 88, 8 + Math.random() * 26, 5 + Math.random() * 14, 0, 0, 7); g.fill(); }
+    for (let i = 0; i < 18; i++) { g.fillStyle = "rgba(255,255,255,0.7)"; g.beginPath(); g.ellipse(Math.random() * 256, Math.random() * 128, 10 + Math.random() * 30, 3 + Math.random() * 6, 0, 0, 7); g.fill(); }
+    earthTexture = new THREE.CanvasTexture(c);
+    earthTexture.colorSpace = THREE.SRGBColorSpace;
+  }
+  const earth = new THREE.Mesh(new THREE.SphereGeometry(170, 32, 20), new THREE.MeshBasicMaterial({ map: earthTexture, fog: false }));
+  earth.position.set(W * 0.78, 520, -900);
+  parent.add(earth);
+}
+
+/** Falling snow (ice) or slow dust motes (moon); `driftStep` moves them and wraps them back into the arena. */
+let drift: { attr: THREE.BufferAttribute; fall: number; top: number; W: number; H: number } | null = null;
+let flakeSprite: THREE.Texture | undefined;
+
+function addDrift(parent: THREE.Object3D, W: number, H: number, snow: boolean) {
+  const count = (snow ? 260 : 60) >> (LITE ? 1 : 0);
+  const top = snow ? 500 : 90;
+  const pts = new Float32Array(count * 3);
+  for (let i = 0; i < pts.length; i += 3) { pts[i] = Math.random() * W; pts[i + 1] = Math.random() * top; pts[i + 2] = Math.random() * H; }
+  const attr = new THREE.BufferAttribute(pts, 3);
+  flakeSprite ??= loadFx("circle_05");
+  const points = new THREE.Points(
+    new THREE.BufferGeometry().setAttribute("position", attr),
+    new THREE.PointsMaterial({ size: snow ? 5 : 4, map: flakeSprite, transparent: true, opacity: snow ? 0.9 : 0.35, depthWrite: false, blending: THREE.AdditiveBlending, color: snow ? 0xffffff : 0xcfcfe0 }),
+  );
+  points.frustumCulled = false;
+  parent.add(points);
+  drift = { attr, fall: snow ? 45 : 0, top, W, H };
+}
+
+function driftStep(dt: number, t: number) {
+  if (!drift) { return; }
+  const { attr, fall, top, W, H } = drift;
+  const a = attr.array as Float32Array;
+  for (let i = 0; i < a.length; i += 3) {
+    a[i] += Math.sin(t / 900 + i) * 12 * dt + (fall ? 0 : 8 * dt);
+    a[i + 1] -= fall * dt;
+    if (a[i + 1] < 0) { a[i + 1] += top; }
+    if (a[i] > W) { a[i] -= W; } else if (a[i] < 0) { a[i] += W; }
+    if (a[i + 2] > H) { a[i + 2] -= H; }
+  }
+  attr.needsUpdate = true;
+}
+
+/** Painted floor: grey dust and craters for the moon, pale glossy ice with cracks for the rink. */
+function floorTexture(kind: "moon" | "ice") {
+  let tex = floorTextures.get(kind);
+  if (!tex) { tex = paintFloor(kind); floorTextures.set(kind, tex); }
+  return tex;
+}
+
+function paintFloor(kind: "moon" | "ice") {
+  const c = document.createElement("canvas");
+  c.width = 1024; c.height = 768;
+  const g = c.getContext("2d")!;
+  const rnd = (n: number) => Math.random() * n;
+  if (kind === "moon") {
+    g.fillStyle = "#8a8795"; g.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < 6000; i++) { g.fillStyle = `rgba(${rnd(2) < 1 ? "255,255,255" : "0,0,0"},${rnd(0.08)})`; g.fillRect(rnd(c.width), rnd(c.height), 1 + rnd(3), 1 + rnd(3)); }
+    for (let i = 0; i < 40; i++) {
+      const x = rnd(c.width), y = rnd(c.height), r = 12 + rnd(55);
+      const grad = g.createRadialGradient(x, y, r * 0.2, x, y, r);
+      grad.addColorStop(0, "rgba(40,38,52,0.55)"); grad.addColorStop(0.8, "rgba(40,38,52,0.25)"); grad.addColorStop(0.92, "rgba(230,228,240,0.45)"); grad.addColorStop(1, "rgba(0,0,0,0)");
+      g.fillStyle = grad; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+  } else {
+    const grad = g.createLinearGradient(0, 0, c.width, c.height);
+    grad.addColorStop(0, "#d6f3ff"); grad.addColorStop(0.5, "#a9dcf5"); grad.addColorStop(1, "#cdeeff");
+    g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height);
+    g.lineCap = "round";
+    for (let i = 0; i < 60; i++) {
+      let x = rnd(c.width), y = rnd(c.height);
+      g.strokeStyle = `rgba(255,255,255,${0.2 + rnd(0.5)})`; g.lineWidth = 1 + rnd(2);
+      g.beginPath(); g.moveTo(x, y);
+      for (let s = 0; s < 6; s++) { x += rnd(80) - 40; y += rnd(80) - 40; g.lineTo(x, y); }
+      g.stroke();
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 function buildArena(arena: Arena) {
   // Free the old arena's GPU memory first.
@@ -47,6 +158,17 @@ function buildArena(arena: Arena) {
 
   const { width: W, height: H, theme } = arena;
   (scene.fog as THREE.FogExp2).color.set(theme.fog);
+  look(theme);
+  sun.color.set(theme.sun?.[0] ?? 0xffffff);
+  sun.intensity = theme.sun?.[1] ?? 2.2;
+  drift = null;
+  if (theme.floor === "moon") { addMoonSky(arenaGroup, W, H); addDrift(arenaGroup, W, H, false); }
+  if (theme.floor === "ice") { addDrift(arenaGroup, W, H, true); }
+  if (theme.floor === "ice" && !iceEnv) {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    iceEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+  }
 
   sun.position.set(W / 2 + 350, 900, H / 2 + 350);
   sun.target.position.set(W / 2, 0, H / 2);
@@ -64,7 +186,27 @@ function buildArena(arena: Arena) {
   // Long walls glow in the rim colour, blocks and pillars in the edge colour, so the layout reads at a glance.
   for (const o of arena.obstacles) {
     const long = Math.max(o.hw, o.hh) > 2 * Math.min(o.hw, o.hh);
-    neonBox(arenaGroup, o.hw * 2, o.h, o.hh * 2, o.x, o.h / 2, o.y, long ? theme.rim : theme.edge, theme.block);
+    const box = neonBox(arenaGroup, o.hw * 2, o.h, o.hh * 2, o.x, o.h / 2, o.y, long ? theme.rim : theme.edge, theme.block);
+    const mat = box.material as THREE.MeshStandardMaterial;
+    if (theme.floor === "moon") { mat.roughness = 1; }
+    if (theme.floor === "ice") {
+      Object.assign(mat, { roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.7, depthWrite: false, envMap: iceEnv, envMapIntensity: 0.8 });
+      box.castShadow = false;
+    }
+  }
+
+  if (theme.floor) {
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(W, H),
+      new THREE.MeshStandardMaterial({
+        map: floorTexture(theme.floor), roughness: theme.floor === "ice" ? 0.12 : 1, metalness: theme.floor === "ice" ? 0.25 : 0,
+        envMap: theme.floor === "ice" ? iceEnv : null, envMapIntensity: 0.8,
+      }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(W / 2, 0.2, H / 2);
+    floor.receiveShadow = true;
+    arenaGroup.add(floor);
   }
 
   // Glowing ring marking the spawn area in the middle.
@@ -82,7 +224,7 @@ function buildArena(arena: Arena) {
   for (let z = 0; z <= H; z += 50) { gridPoints.push(new THREE.Vector3(0, 0.5, z), new THREE.Vector3(W, 0.5, z)); }
   arenaGroup.add(new THREE.LineSegments(
     new THREE.BufferGeometry().setFromPoints(gridPoints),
-    new THREE.LineBasicMaterial({ color: theme.grid, transparent: true, opacity: 0.45 }),
+    new THREE.LineBasicMaterial({ color: theme.grid, transparent: true, opacity: theme.floor ? 0.2 : 0.45 }),
   ));
 
   moveCamera.setView(
@@ -204,6 +346,7 @@ async function main() {
     const dt = Math.min(frameMs / 1000, 0.1);
     last = now;
     adaptQuality(frameMs);
+    if (renderScale() >= 0.7) { driftStep(dt, now); }
     debug.frame(frameMs);
     // Drives prediction, interpolation and the reconciler, and returns how many
     // fixed steps came due - so input rate follows the simulation rate, not the
