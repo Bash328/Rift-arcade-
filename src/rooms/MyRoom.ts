@@ -1,6 +1,7 @@
 import { Room, Client, CloseCode, type StepContext } from "colyseus";
 import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
+import { inputBudget } from "./inputPacing.js";
 import { stepEntity } from "../shared/movement.js";
 import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
@@ -46,6 +47,8 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.state.nextArena = this.state.arena;
     this.roundClock = this.arena.roundSeconds;
     this.state.timeLeft = this.roundClock;
+    // One state update per movement step: every update then carries the same distance.
+    this.setPatchRate(1000 / TICK_RATE);
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
   }
 
@@ -91,8 +94,10 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       const channel = this.inputs.get(sessionId);
       if (!channel) { continue; }
 
+      let budget = inputBudget(channel.size);
       for (const input of channel) {
         stepEntity(player, input, ctx.dt, this.arena);
+        if (--budget <= 0) { break; } // the rest stay buffered for the next tick
       }
     }
 

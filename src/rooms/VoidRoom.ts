@@ -2,6 +2,7 @@ import { Room, Client, type StepContext } from "colyseus";
 import { VoidState, VoidPlayer } from "./schema/VoidState.js";
 import { MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
+import { inputBudget } from "./inputPacing.js";
 import { TICK_RATE, PETS } from "../shared/constants.js";
 import {
   GRID, VOID_SIZE, SOLID, CRACKING, GONE, CRACK_TIME, FALL_LIMIT, tileAt, stepVoidEntity,
@@ -42,6 +43,7 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     if (options?.private) { await this.setPrivate(true); }
     for (let i = 0; i < GRID * GRID; i++) { this.state.tiles.push(SOLID); }
     this.state.phase = "waiting";
+    this.setPatchRate(1000 / TICK_RATE);
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
   }
 
@@ -81,7 +83,13 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     for (const [sessionId, p] of s.players) {
       if (!p.alive) { continue; }
       let stepped = 0;
-      for (const input of this.inputs.get(sessionId) ?? []) { stepVoidEntity(p, input, ctx.dt, s.tiles); stepped++; }
+      const channel = this.inputs.get(sessionId);
+      let budget = inputBudget(channel?.size ?? 0);
+      for (const input of channel ?? []) {
+        stepVoidEntity(p, input, ctx.dt, s.tiles);
+        stepped++;
+        if (--budget <= 0) { break; } // the rest stay buffered for the next tick
+      }
 
       // Inputs are the clock, so a player who stops sending them (a backgrounded
       // tab, a dead connection) would hang in mid-air over a missing tile. After a

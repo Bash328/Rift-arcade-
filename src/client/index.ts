@@ -9,7 +9,7 @@ import { PLAYER_HALF } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
 import {
   createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, gameReady, showFatal, SHADOW_MAP,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, SHADOW_MAP,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
 
@@ -139,7 +139,9 @@ async function main() {
   // latest snapshot instead. `smoothMs` springs the interpolated output - ~65 ms
   // of extra display lag buys velocity that stays continuous even when the
   // snapshot stream is rough. Use 0 where draw == hit precision matters most.
-  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
+  // Others are drawn `delay` ms behind the newest update so a late or bunched-up one does not show.
+  // Updates arrive every ~33 ms, so 100 ms is a cushion of 3 updates; phones get a little more.
+  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], delay: LITE ? 130 : 100, smoothMs: 65 });
 
   const input = room.input<MoveInput>({ mode: "reliable" });
 

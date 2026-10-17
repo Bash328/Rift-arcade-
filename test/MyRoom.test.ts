@@ -9,6 +9,7 @@ import { stepVoidEntity, tileAt, GRID, GONE, SOLID } from "../src/shared/void.js
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
 import { PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
 import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
+import { inputBudget } from "../src/rooms/inputPacing.js";
 
 const classic = ARENA_BY_ID.classic;
 
@@ -326,5 +327,31 @@ describe("testing your Colyseus app", () => {
     await colyseus.connectTo(room, { name: "Guest" });
     for (let i = 0; i < 60 && !room.state.winner; i++) { await room.waitForNextTimestep(); }
     assert.strictEqual(room.state.nextArena, "maze", "it stays in the host's arena");
+  });
+
+  it("a burst of inputs (a phone catching up after a hiccup) is spread over ticks, not applied in one lunge", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic" });
+    const a = await colyseus.connectTo(room, { name: "A" });
+    const input = a.input<MoveInput>({ mode: "reliable" });
+    const player = room.state.players.get(a.sessionId);
+    const step = PLAYER_SPEED / TICK_RATE; // distance of one input
+    const BURST = 12;
+
+    await room.waitForNextTimestep();
+    const startX = player.x;
+    for (let i = 0; i < BURST; i++) { input.data.moveX = 1; input.data.moveY = 0; input.data.jump = 0; input.send(); }
+
+    const xs: number[] = [startX];
+    for (let i = 0; i < 14; i++) { await room.waitForNextTimestep(); xs.push(player.x); }
+    const steps = xs.slice(1).map((x, i) => Math.round((x - xs[i]) / step));
+    // The server's own clock can run two ticks back to back, so allow a few steps, but 12 in one go is a lunge.
+    assert.ok(Math.max(...steps) <= 8, `moved ${Math.max(...steps)} steps in one go: ${steps}`);
+    assert.ok(steps.filter((n) => n > 0).length >= 3, `all of it landed in ${steps.filter((n) => n > 0).length} moments: ${steps}`);
+    assert.ok(Math.abs(xs[xs.length - 1] - startX - BURST * step) < 0.001, "every input was still applied exactly once");
+  });
+
+  it("input pacing: one input a tick, two while a backlog has built up", () => {
+    assert.deepStrictEqual([0, 1, 2].map(inputBudget), [1, 1, 1]);
+    assert.deepStrictEqual([3, 8, 40].map(inputBudget), [2, 2, 2]);
   });
 });
