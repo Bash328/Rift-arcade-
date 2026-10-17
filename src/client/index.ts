@@ -10,7 +10,7 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, OBSTACLES } from "../shared/constants.js";
 
-/** Canvas size in pixels; the arena is scaled to fit it. */
+/** Initial canvas size; resize() fits it to the cabinet screen. */
 const VIEW_W = 960;
 const VIEW_H = 720;
 
@@ -108,8 +108,11 @@ scene.add(new THREE.LineSegments(
 ));
 
 const camera = new THREE.PerspectiveCamera(50, VIEW_W / VIEW_H, 1, 4000);
-camera.position.set(ARENA_WIDTH / 2, ARENA_HEIGHT * 1.1, ARENA_HEIGHT * 1.47); // fixed: frames the whole arena
-camera.lookAt(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
+// Desktop: a fixed camera that frames the whole arena.
+const overviewPos = new THREE.Vector3(ARENA_WIDTH / 2, ARENA_HEIGHT * 1.1, ARENA_HEIGHT * 1.47);
+const overviewLook = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
+camera.position.copy(overviewPos);
+camera.lookAt(overviewLook);
 
 // Bloom is what makes the bright lines and emissive cubes glow.
 const composer = new EffectComposer(
@@ -119,6 +122,22 @@ const composer = new EffectComposer(
 composer.addPass(new RenderPass(scene, camera));
 composer.addPass(new UnrealBloomPass(new THREE.Vector2(VIEW_W, VIEW_H), 0.9, 0.5, 0.7));
 composer.addPass(new OutputPass());
+
+// The screen's size depends on the device (4:3 on desktop, tall on a phone), so
+// the canvas follows whatever box the cabinet gives it.
+function resize() {
+  const w = Math.max(arenaEl.clientWidth, 1);
+  const h = Math.max(arenaEl.clientHeight, 1);
+  const ratio = Math.min(devicePixelRatio, 1.5);
+  renderer.setPixelRatio(ratio);
+  composer.setPixelRatio(ratio);
+  renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(arenaEl);
+resize();
 
 // Pooled particles, used for movement trails and the tag burst.
 const particleGeo = new THREE.BoxGeometry(1, 1, 1);
@@ -155,7 +174,7 @@ function updateParticles(dt: number) {
 const held = new Set<string>();
 addEventListener("keydown", (e) => {
   // Arrow keys would otherwise scroll the page now that the canvas is tall.
-  if (e.key.startsWith("Arrow")) { e.preventDefault(); }
+  if (e.key.startsWith("Arrow") || e.key === " ") { e.preventDefault(); }
   held.add(e.key.toLowerCase());
 });
 addEventListener("keyup", (e) => held.delete(e.key.toLowerCase()));
@@ -205,6 +224,13 @@ stickEl.addEventListener("pointermove", (e) => { if (stick.active) { dragStick(e
 stickEl.addEventListener("pointerup", releaseStick);
 stickEl.addEventListener("pointercancel", releaseStick);
 
+// Jump button: hold to keep jumping. Space does the same on a keyboard.
+const jumpEl = document.getElementById("jump")!;
+let jumpHeld = false;
+const setJump = (down: boolean) => { jumpHeld = down; jumpEl.classList.toggle("down", down); };
+jumpEl.addEventListener("pointerdown", (e) => { jumpEl.setPointerCapture(e.pointerId); setJump(true); });
+for (const type of ["pointerup", "pointercancel"]) { jumpEl.addEventListener(type, () => setJump(false)); }
+
 function askName(): string {
   try {
     const saved = localStorage.getItem("name");
@@ -225,7 +251,7 @@ async function main() {
   // latest snapshot instead. `smoothMs` springs the interpolated output - ~65 ms
   // of extra display lag buys velocity that stays continuous even when the
   // snapshot stream is rough. Use 0 where draw == hit precision matters most.
-  predict.attachAll("players", { mode: "lerp", fields: ["x", "y"], smoothMs: 65 });
+  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
 
   const input = room.input<MoveInput>({ mode: "reliable" });
 
@@ -235,7 +261,7 @@ async function main() {
 
   predict.reconciler(self, {
     input,
-    fields: ["x", "y", "vx", "vy"],
+    fields: ["x", "y", "vx", "vy", "z", "vz"],
     // The same function the server runs - determinism is the whole contract.
     step: (ctx, predicted, command) => stepEntity(predicted, command, ctx.dt),
   });
@@ -286,6 +312,13 @@ async function main() {
   let last = performance.now();
   const zero = new THREE.Vector3();
 
+  // A phone can't fit the whole arena on screen, so the camera chases the player
+  // there; desktop keeps the fixed overview.
+  const followMq = matchMedia("(pointer: coarse), (max-width: 700px)");
+  const camGoal = new THREE.Vector3();
+  const lookGoal = new THREE.Vector3();
+  const look = overviewLook.clone();
+
   function frame(now: number) {
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
@@ -297,6 +330,7 @@ async function main() {
     for (let i = 0; i < steps; i++) {
       input.data.moveX = axis(["a", "arrowleft"], ["d", "arrowright"]) || stick.x;
       input.data.moveY = axis(["w", "arrowup"], ["s", "arrowdown"]) || stick.y;
+      input.data.jump = held.has(" ") || jumpHeld ? 1 : 0;
       input.send();
     }
 
@@ -324,7 +358,7 @@ async function main() {
       const w = pop * pop;
       cube.scale.set(base * (1 + 0.5 * w), base * (1 - 0.4 * w), base * (1 + 0.5 * w));
       // Predicted for us, interpolated for everyone else - one read either way.
-      cube.position.set(predict.value(player, "x"), PLAYER_HALF * cube.scale.y, predict.value(player, "y"));
+      cube.position.set(predict.value(player, "x"), PLAYER_HALF * cube.scale.y + predict.value(player, "z"), predict.value(player, "y"));
       const mat = cube.material as THREE.MeshStandardMaterial;
       mat.emissive.set(isIt ? 0xff2020 : 0x000000);
 
@@ -342,6 +376,20 @@ async function main() {
       moveKnob(axis(["a", "arrowleft"], ["d", "arrowright"]) * reach, axis(["w", "arrowup"], ["s", "arrowdown"]) * reach);
     }
     lampEl.classList.toggle("on", room.state.it === room.sessionId);
+
+    const mine = cubes.get(room.sessionId);
+    if (followMq.matches && mine) {
+      const fx = Math.min(Math.max(mine.position.x, 140), ARENA_WIDTH - 140);
+      const fz = Math.min(Math.max(mine.position.z, 120), ARENA_HEIGHT - 80);
+      camGoal.set(fx, 300, fz + 300);
+      lookGoal.set(fx, 0, fz);
+    } else {
+      camGoal.copy(overviewPos);
+      lookGoal.copy(overviewLook);
+    }
+    camera.position.lerp(camGoal, 0.12);
+    look.lerp(lookGoal, 0.12);
+    camera.lookAt(look);
 
     drawBoard();
     const { timeLeft, winner, it } = room.state;

@@ -11,7 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/src/client/arcade.css" />
   </head>
-  <body>
+  <body class="game">
     <main class="play">
       <div class="cab cab--lit cab--game">
         <header class="cab__marquee">
@@ -32,12 +32,12 @@
 
         <div class="cab__deck">
           <div class="joy" id="stick" aria-hidden="true"><span class="joy__knob" id="knob"></span></div>
-          <span class="btns" aria-hidden="true"><span class="btn btn--cyan"></span><span class="btn btn--amber"></span></span>
+          <div class="btns"><button type="button" class="btn btn--cyan" id="jump" aria-label="Jump">JUMP</button><span class="btn btn--amber" aria-hidden="true"></span></div>
         </div>
 
         <section class="placard">
           <h2>HOW TO PLAY</h2>
-          <p>Steer with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, the arrow keys, or drag the joystick. The big glowing red cube is IT: touch someone to pass it on. Every second you are not IT scores a point, and the highest score after 60 seconds wins. Open the link in a second tab or send it to a friend to start a match.</p>
+          <p>Steer with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, the arrow keys, or drag the joystick, and jump with <kbd>SPACE</kbd> or the JUMP button. The big glowing red cube is IT: touch someone to pass it on. Low steps and walls can be jumped onto; chain them to reach the tall blocks, where nobody on the ground can tag you. Every second you are not IT scores a point, and the highest score after 60 seconds wins. Open the link in a second tab or send it to a friend to start a match.</p>
         </section>
         <div class="cab__base"></div>
       </div>

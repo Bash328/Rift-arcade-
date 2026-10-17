@@ -473,3 +473,36 @@ a.cab:focus-visible { outline-offset: 6px; border-radius: 26px; }
   .demo .it { translate: 20cqw 20cqw; }
   .cab, .joy__knob { transition: none; }
 }
+
+/* ---------- Jump button ---------- */
+
+button.btn {
+  border: 0;
+  padding: 0;
+  font: 800 0.6rem/1 var(--display);
+  letter-spacing: 0.04em;
+  color: #04141a;
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.cab--game #jump { width: clamp(3rem, 16vw, 4.2rem); height: clamp(3rem, 16vw, 4.2rem); font-size: clamp(0.6rem, 2.6vw, 0.8rem); }
+#jump.down { transform: translateY(3px); filter: brightness(1.25); box-shadow: 0 0 18px #35e5ffcc; }
+
+.game .cab__deck { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.game { touch-action: manipulation; }
+
+/* ---------- Phones: just the game screen, with the controls under it ---------- */
+
+@media (max-width: 700px), (max-height: 520px) {
+  .game { overflow: hidden; overscroll-behavior: none; }
+  .game .play { height: 100dvh; min-height: 0; padding: 0; }
+  .cab--game { height: 100dvh; max-width: none; border-radius: 0; border-width: 0; box-shadow: none; }
+  .cab--game .cab__marquee { height: 44px; font-size: 1rem; border-bottom-width: 2px; }
+  .cab--game .cab__bezel { flex: 1 1 0; min-height: 0; padding: 6px; }
+  .cab--game .cab__screen { aspect-ratio: auto; align-self: stretch; width: 100%; border-radius: 6px; }
+  .cab--game .cab__deck { min-height: 0; margin: 0; padding: 0.6rem 1.5rem 0.9rem; border-radius: 0; justify-content: space-between; }
+  .cab--game .joy { width: 6.2rem; height: 6.2rem; }
+  .cab--game .btn--amber, .placard { display: none; }
+  .cab--game #jump { width: 5rem; height: 5rem; font-size: 0.85rem; }
+}

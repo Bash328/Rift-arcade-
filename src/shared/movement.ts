@@ -1,18 +1,26 @@
-import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, PLAYER_SPEED, OBSTACLES } from "./constants.js";
+import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, PLAYER_SPEED, OBSTACLES, JUMP_SPEED, GRAVITY } from "./constants.js";
 
 /**
  * Structural types on purpose: the same step runs on a server Schema instance
  * and on the client reconciler's plain predicted copy, with no schema runtime
  * involved in the simulation.
  */
-export interface EntityState { x: number; y: number; vx: number; vy: number; }
-export interface MoveInputLike { moveX: number; moveY: number; }
+export interface EntityState { x: number; y: number; vx: number; vy: number; z: number; vz: number; }
+export interface MoveInputLike { moveX: number; moveY: number; jump: number; }
 
 const clamp = (value: number, min: number, max: number) =>
   (value < min ? min : value > max ? max : value);
 
-const blockedAt = (x: number, y: number) =>
-  OBSTACLES.some((o) => Math.abs(x - o.x) < o.hw + PLAYER_HALF && Math.abs(y - o.y) < o.hh + PLAYER_HALF);
+const overlaps = (o: (typeof OBSTACLES)[number], x: number, y: number) =>
+  Math.abs(x - o.x) < o.hw + PLAYER_HALF && Math.abs(y - o.y) < o.hh + PLAYER_HALF;
+
+/** A surface blocks walking only while the player's feet (z) are below its top. */
+const blockedAt = (x: number, y: number, z: number) =>
+  OBSTACLES.some((o) => overlaps(o, x, y) && z < o.h);
+
+/** Height of the highest surface under the player's footprint (0 = the floor). */
+export const floorAt = (x: number, y: number) =>
+  OBSTACLES.reduce((top, o) => (overlaps(o, x, y) && o.h > top ? o.h : top), 0);
 
 /**
  * The single movement step, run identically by the server (once per received
@@ -40,17 +48,28 @@ export function stepEntity(entity: EntityState, input: MoveInputLike, dt: number
 
   // Axis-separated, so a player slides along a pillar face instead of sticking.
   const clampedX = clamp(wantX, PLAYER_HALF, ARENA_WIDTH - PLAYER_HALF);
-  const x = blockedAt(clampedX, entity.y) ? entity.x : clampedX;
+  const x = blockedAt(clampedX, entity.y, entity.z) ? entity.x : clampedX;
   const clampedY = clamp(wantY, PLAYER_HALF, ARENA_HEIGHT - PLAYER_HALF);
-  const y = blockedAt(x, clampedY) ? entity.y : clampedY;
+  const y = blockedAt(x, clampedY, entity.z) ? entity.y : clampedY;
 
   // Hitting a wall or pillar also kills the velocity heading into it, so the
   // reconciler replays the same stop the server did.
   if (x !== wantX) { vx = 0; }
   if (y !== wantY) { vy = 0; }
 
+  // Vertical: jump only from a surface, then gravity; land on the highest surface
+  // under the new position (the floor, a step, a block top).
+  const floor = floorAt(x, y);
+  let vz = entity.vz;
+  if (input.jump && entity.z <= floor) { vz = JUMP_SPEED; }
+  vz -= GRAVITY * dt;
+  let z = entity.z + vz * dt;
+  if (z <= floor) { z = floor; vz = 0; }
+
   entity.x = x;
   entity.y = y;
   entity.vx = vx;
   entity.vy = vy;
+  entity.z = z;
+  entity.vz = vz;
 }

@@ -87,8 +87,8 @@ describe("testing your Colyseus app", () => {
 
   it("stops at a pillar and slides along its face", () => {
     // Corner block at (230, 170), half-extent 40: its left face is x=190, so a player (half 12) stops at 178.
-    const e = { x: 177, y: 170, vx: 0, vy: 0 };
-    stepEntity(e, { moveX: 1, moveY: 1 }, 1 / TICK_RATE);
+    const e = { x: 177, y: 170, vx: 0, vy: 0, z: 0, vz: 0 };
+    stepEntity(e, { moveX: 1, moveY: 1, jump: 0 }, 1 / TICK_RATE);
     assert.strictEqual(e.x, 177, "blocked on x");
     assert.ok(e.y > 170, "still slides on y");
   });
@@ -108,5 +108,32 @@ describe("testing your Colyseus app", () => {
       const cy = Math.max(Math.abs(ARENA_HEIGHT / 2 - a.y) - a.hh, 0);
       assert.ok(Math.hypot(cx, cy) > 92, `obstacle ${i} overlaps the spawn ring`);
     }
+  });
+
+  it("jumps high enough for steps but not tall blocks, and lands on surfaces", () => {
+    const dt = 1 / TICK_RATE;
+    const idle = { moveX: 0, moveY: 0, jump: 0 };
+
+    // Flat ground in the spawn area: leave the floor, peak, come back down.
+    const e = { x: 600, y: 450, vx: 0, vy: 0, z: 0, vz: 0 };
+    stepEntity(e, { ...idle, jump: 1 }, dt);
+    assert.ok(e.z > 0, "left the ground");
+    let apex = e.z;
+    for (let i = 0; i < 40; i++) { stepEntity(e, idle, dt); apex = Math.max(apex, e.z); }
+    assert.strictEqual(e.z, 0, "landed");
+    assert.ok(apex > 55 && apex < 80, `apex ${apex}: clears 50-high steps, not 80-high blocks`);
+
+    // A step (230, 275, h40): a falling player comes to rest on top of it.
+    const s = { x: 230, y: 275, vx: 0, vy: 0, z: 60, vz: 0 };
+    for (let i = 0; i < 30; i++) { stepEntity(s, idle, dt); }
+    assert.strictEqual(s.z, 40);
+
+    // The corner block (230, 170, h80) stops a grounded player but not one above it.
+    const low = { x: 177, y: 170, vx: 0, vy: 0, z: 0, vz: 0 };
+    stepEntity(low, { ...idle, moveX: 1 }, dt);
+    assert.strictEqual(low.x, 177, "blocked from the ground");
+    const high = { x: 177, y: 170, vx: 0, vy: 0, z: 85, vz: 0 };
+    stepEntity(high, { ...idle, moveX: 1 }, dt);
+    assert.ok(high.x > 177, "walks over it from above");
   });
 });

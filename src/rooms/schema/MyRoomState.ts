@@ -13,6 +13,7 @@ import { schema, t, type SchemaType } from "@colyseus/schema";
 export const MoveInput = schema({
   moveX: t.int8<-1 | 0 | 1>(),
   moveY: t.int8<-1 | 0 | 1>(),
+  jump: t.int8<0 | 1>(),
 });
 export type MoveInput = SchemaType<typeof MoveInput>;
 
@@ -21,6 +22,9 @@ export const Player = schema({
   y: t.number(),
   vx: t.number(),
   vy: t.number(),
+  /** Height of the feet above the floor, and vertical speed. */
+  z: t.number(),
+  vz: t.number(),
   score: t.number(),
   name: t.string(),
   /** Cube color, 0-360. */

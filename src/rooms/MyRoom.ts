@@ -14,7 +14,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
    */
   inputs = this.defineInput(MoveInput, {
     bufferMaxSize: 64,
-    sanitize: { moveX: [-1, 1], moveY: [-1, 1] },
+    sanitize: { moveX: [-1, 1], moveY: [-1, 1], jump: [0, 1] },
   });
 
   private joinCount = 0;
@@ -43,6 +43,8 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       y: ARENA_HEIGHT / 2 + Math.sin(angle) * 80,
       vx: 0,
       vy: 0,
+      z: 0,
+      vz: 0,
       score: 0,
       name: String(options?.name ?? "").trim().slice(0, 12) || "Player",
       hue: (n * 137.5 + 200) % 360,
@@ -91,7 +93,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       if (sessionId === this.state.it) { continue; }
       player.score += ctx.dt; // survival time
       // ponytail: circle test, tagging the first overlap in map order; fine for 8 players
-      if (this.cooldown === 0 && Math.hypot(player.x - it.x, player.y - it.y) < PLAYER_HALF * 2) {
+      if (this.cooldown === 0 && Math.hypot(player.x - it.x, player.y - it.y, player.z - it.z) < PLAYER_HALF * 2) {
         this.state.it = sessionId;
         this.cooldown = TAG_COOLDOWN;
         break;
