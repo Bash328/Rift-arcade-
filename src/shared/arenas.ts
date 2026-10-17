@@ -138,7 +138,7 @@ const ICE: Arena = {
   width: W, height: H, spawnRadius: 170,
   gravity: 1, jump: 1, slide: 0.4, roundSeconds: 90,
   theme: { edge: 0x9fe9ff, rim: 0xffffff, grid: 0x6fd0ff, slab: 0x0a1a2e, block: 0x8fd0f2, fog: 0x4f7ea3, floor: "ice",
-    sky: ["#071a33", "#1b4a73", "#9fd0ea"], hemi: [0xbfe6ff, 0x405870, 1], sun: [0xdff3ff, 1.6], bloom: 0.9 },
+    sky: ["#071a33", "#1b4a73", "#9fd0ea"], hemi: [0xbfe6ff, 0x405870, 0.5], sun: [0xdff3ff, 0.9], bloom: 1.2 },
   obstacles: mirrored([
     { x: 250, y: 230, hw: 40, hh: 40, h: 70 },
     { x: 560, y: 160, hw: 26, hh: 26, h: 70 },

@@ -45,10 +45,9 @@ let earthTexture: THREE.Texture | undefined;
 /** Black sky: a scatter of stars and the Earth hanging behind the arena. */
 function addMoonSky(parent: THREE.Object3D, W: number, H: number) {
   const pts = new Float32Array(3 * (LITE ? 300 : 700));
-  const v = new THREE.Vector3();
+  // A backdrop behind the far wall, where the camera's sky strip actually looks.
   for (let i = 0; i < pts.length; i += 3) {
-    v.randomDirection(); v.y = Math.abs(v.y) * 0.7 + 0.15;
-    v.multiplyScalar(2200).add(new THREE.Vector3(W / 2, 0, H / 2)).toArray(pts, i);
+    pts[i] = -800 + Math.random() * (W + 1600); pts[i + 1] = 80 + Math.random() * 900; pts[i + 2] = -1400 + Math.random() * 1100;
   }
   starSprite ??= loadFx("star_04");
   const stars = new THREE.Points(
@@ -68,8 +67,8 @@ function addMoonSky(parent: THREE.Object3D, W: number, H: number) {
     earthTexture = new THREE.CanvasTexture(c);
     earthTexture.colorSpace = THREE.SRGBColorSpace;
   }
-  const earth = new THREE.Mesh(new THREE.SphereGeometry(170, 32, 20), new THREE.MeshBasicMaterial({ map: earthTexture, fog: false }));
-  earth.position.set(W * 0.78, 520, -900);
+  const earth = new THREE.Mesh(new THREE.SphereGeometry(150, 32, 20), new THREE.MeshBasicMaterial({ map: earthTexture, fog: false }));
+  earth.position.set(W * 0.78, 380, -600);
   parent.add(earth);
 }
 
@@ -199,8 +198,9 @@ function buildArena(arena: Arena) {
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(W, H),
       new THREE.MeshStandardMaterial({
-        map: floorTexture(theme.floor), roughness: theme.floor === "ice" ? 0.12 : 1, metalness: theme.floor === "ice" ? 0.25 : 0,
-        envMap: theme.floor === "ice" ? iceEnv : null, envMapIntensity: 0.8,
+        map: floorTexture(theme.floor), roughness: theme.floor === "ice" ? 0.3 : 1, metalness: theme.floor === "ice" ? 0.15 : 0,
+        color: theme.floor === "ice" ? 0x8fb4c8 : 0xffffff, // dims the pale texture so it doesn't blow out
+        envMap: theme.floor === "ice" ? iceEnv : null, envMapIntensity: 0.5,
       }),
     );
     floor.rotation.x = -Math.PI / 2;
