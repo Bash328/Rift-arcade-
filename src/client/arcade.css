@@ -846,3 +846,21 @@ button.btn {
 .modebanner__name { font: 800 clamp(1.1rem, 4vw, 1.6rem)/1.1 var(--display); letter-spacing: 0.1em; text-transform: uppercase; color: #fff; text-shadow: 0 0 12px var(--pink); }
 .modebanner__blurb { font-size: 0.8rem; color: var(--lavender); }
 @media (prefers-reduced-motion: reduce) { .modebanner { animation: none; } }
+
+/* ---------- Intro card: what the room is, shown to everyone who joins ---------- */
+
+.intro {
+  position: absolute; inset: 50% auto auto 50%; translate: -50% -50%; z-index: 26;
+  display: grid; justify-items: center; gap: 0.5rem;
+  width: min(26rem, 88%); max-height: 92%; overflow: auto; padding: 1rem 1.4rem; text-align: center;
+  background: #050109f2; border: 2px solid var(--pink); border-radius: 14px;
+  box-shadow: 0 0 28px #ff2bd666;
+  animation: roundend-pop 0.35s var(--ease);
+}
+.intro[hidden] { display: none; }
+.intro p { margin: 0; }
+.intro__label { font: 700 0.65rem/1 var(--display); letter-spacing: 0.3em; text-transform: uppercase; color: var(--muted); }
+.intro__title { font: 800 clamp(1.2rem, 4.5vw, 1.8rem)/1.1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: #fff; text-shadow: 0 0 12px var(--pink); }
+.intro__text { font-size: 0.85rem; line-height: 1.45; color: var(--text); }
+.intro__text--small { font-size: 0.75rem; color: var(--lavender); }
+@media (prefers-reduced-motion: reduce) { .intro { animation: none; } }

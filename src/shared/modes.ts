@@ -6,6 +6,8 @@ export interface Mode {
   name: string;
   /** One line shown when the round starts. */
   blurb: string;
+  /** The full explanation shown when someone joins a room. */
+  rules: string;
   /** Round length in seconds; omitted = the arena's own length. */
   seconds?: number;
   /** The mode is skipped in the rotation when fewer players than this are in the room. */
@@ -13,10 +15,21 @@ export interface Mode {
 }
 
 export const MODES: Mode[] = [
-  { id: "tag", name: "Cube Tag", blurb: "Don't be IT. Every second you are free scores a point.", minPlayers: 2 },
-  { id: "orbs", name: "Orb Rush", blurb: "Grab the glowing orbs. Gold ones are worth 3, and some sit on blocks.", seconds: 60, minPlayers: 1 },
-  { id: "infect", name: "Infection", blurb: "The red cube spreads by touch. Stay clean as long as you can.", seconds: 75, minPlayers: 3 },
-  { id: "hill", name: "King of the Hill", blurb: "Hold the glowing ring on your own to score. It moves every 20 seconds.", seconds: 75, minPlayers: 2 },
+  {
+    id: "tag", name: "Cube Tag", minPlayers: 2,
+    blurb: "Don't be IT. Every second you are free scores a point.",
+    rules: "One cube is IT, glowing red. Touch another player to pass it on. Every second you are not IT scores a point, and the highest score when the clock runs out wins. Jump onto blocks to get out of reach.",
+  },
+  {
+    id: "orbs", name: "Orb Rush", seconds: 60, minPlayers: 1,
+    blurb: "Grab the glowing orbs. Gold ones are worth 3, and some sit on blocks.",
+    rules: "Glowing orbs appear around the arena. Run into one to score: blue is 1 point, gold is 3. Some float over low blocks, so jump up for them. The most points when the clock runs out wins.",
+  },
+  {
+    id: "infect", name: "Infection", seconds: 75, minPlayers: 3,
+    blurb: "The red cube spreads by touch. Stay clean as long as you can.",
+    rules: "One cube starts red. Touch a clean player and they turn red too. Players who are still clean score every second. The round ends when everyone is red, and the most points wins.",
+  },
 ];
 
 export const MODE_BY_ID: Record<string, Mode> = Object.fromEntries(MODES.map((m) => [m.id, m]));
@@ -24,10 +37,6 @@ export const MODE_BY_ID: Record<string, Mode> = Object.fromEntries(MODES.map((m)
 /** The mode for an id from the network, falling back to Cube Tag. */
 // hasOwn: an id like "constructor" from the network must not find something on the prototype.
 export const modeOf = (id: string | undefined): Mode => (id && Object.hasOwn(MODE_BY_ID, id) ? MODE_BY_ID[id] : MODES[0]);
-
-/** King of the Hill: ring size and how often it moves. */
-export const ZONE_RADIUS = 110;
-export const ZONE_MOVE_SECONDS = 20;
 
 /** Orb Rush: how close (flat distance) and how level (height difference) a player must be to pick an orb up. */
 export const ORB_REACH = 26;

@@ -353,6 +353,27 @@ export function runLobby<R extends { reconnectionToken: string }>(join: JoinFns<
   });
 }
 
+/**
+ * Leave the room on purpose (so the server frees the seat now instead of holding it for 30 seconds)
+ * and show the lobby again, with the name and game choices.
+ */
+export async function leaveToLobby(room: { leave(): Promise<unknown> | void; roomId?: string }) {
+  try {
+    sessionStorage.removeItem(`seat:${location.pathname}`);
+    sessionStorage.removeItem(`intro:${room.roomId}`); // joining this room again later shows its intro again
+  } catch { /* private mode */ }
+  history.replaceState(null, "", location.pathname); // drop ?room=CODE, or the lobby would join that room again
+  await Promise.race([Promise.resolve(room.leave()), new Promise((resolve) => setTimeout(resolve, 800))]).catch(() => { /* leaving anyway */ });
+  location.reload();
+}
+
+/** Inside a room the back arrow returns to the lobby; from the lobby itself it still goes to the arcade. */
+export function wireBack(room: { leave(): Promise<unknown> | void; roomId?: string }) {
+  const back = document.querySelector<HTMLAnchorElement>(".back");
+  back?.setAttribute("title", "Leave the room");
+  back?.addEventListener("click", (e) => { e.preventDefault(); void leaveToLobby(room); });
+}
+
 /** The room code chip (#roomTag): tap to share the invite link (share sheet on phones, else copy). */
 export function showRoomTag(room: { roomId: string }, gameName: string) {
   const roomTagEl = byId<HTMLButtonElement>("roomTag");

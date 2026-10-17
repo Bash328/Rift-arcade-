@@ -12,7 +12,7 @@
 
 ## From the research report (`reports/Rift Arcade improvement roadmap.md`)
 
-- Cube Tag game modes: a `mode` field that rotates each round, then Orb Rush and Infection (about a day each), then King of the Hill and Falling Hazards.
+- Cube Tag game modes: a `mode` field that rotates each round, Orb Rush and Infection are done; Falling Hazards is next (King of the Hill was tried and removed: no real challenge).
 - Jitter-adaptive interpolation delay (check first that the prediction library lets the delay change while the game runs).
 - Phone graphics: instance the scenery and `neonBox`, rebuild the 300-material particle pool, and drop anti-aliasing if phones are still slow.
 - Preset emotes and a share button on the round-over card.

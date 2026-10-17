@@ -8,7 +8,7 @@ import { PLAYER_HALF, GRAVITY } from "../shared/constants.js";
 import { stepVoidEntity, GRID, TILE, VOID_SIZE, SOLID, CRACKING, GONE } from "../shared/void.js";
 import {
   NEON_CYAN, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, loadFx, SHADOW_MAP, type Sfx,
+  runLobby, showRoomTag, wireBack, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, loadFx, SHADOW_MAP, type Sfx,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
 
@@ -80,6 +80,7 @@ async function main() {
   });
   showRoomTag(room, "Voidfall");
   audio.play("join");
+  wireBack(room);
   debug.watch(room);
   // Others are drawn `delay` ms behind the newest update so a late or bunched-up one does not show.
   // Updates arrive every ~33 ms, so 100 ms is a cushion of 3 updates; phones get a little more.

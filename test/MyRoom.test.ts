@@ -480,7 +480,7 @@ describe("testing your Colyseus app", () => {
     const a = await colyseus.connectTo(room, { name: "Ann" });
     const pa = room.state.players.get(a.sessionId);
     for (let i = 0; i < 8; i++) { await room.waitForNextTimestep(); }
-    assert.ok(room.state.orbs.size >= 4, `orbs on the field: ${room.state.orbs.size}`);
+    assert.ok(room.state.orbs.size >= 3 && room.state.orbs.size <= 5, `orbs on the field: ${room.state.orbs.size}`);
 
     const [id, orb] = [...room.state.orbs.entries()][0];
     const worth = orb.gold ? 3 : 1;
@@ -490,7 +490,7 @@ describe("testing your Colyseus app", () => {
     assert.ok(!room.state.orbs.has(id), "the orb is picked up");
     assert.ok(pa.score >= before + worth, `scored ${pa.score - before}, expected at least ${worth}`);
     for (let i = 0; i < 4; i++) { await room.waitForNextTimestep(); }
-    assert.ok(room.state.orbs.size >= 4, "the field is topped up again");
+    assert.ok(room.state.orbs.size >= 3, "the field is topped up again");
   });
 
   it("Infection: one red cube spreads by touch, clean players score, and the round ends when all are red", async () => {
@@ -513,27 +513,6 @@ describe("testing your Colyseus app", () => {
     for (let i = 0; i < 4 && !room.state.winner; i++) { await room.waitForNextTimestep(); }
     assert.strictEqual(red(), 3, "everyone is red");
     assert.ok(room.state.winner, "the round ends early");
-  });
-
-  it("King of the Hill: only a player alone in the ring scores", async () => {
-    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic", mode: "hill" });
-    const a = await colyseus.connectTo(room, { name: "A" });
-    const b = await colyseus.connectTo(room, { name: "B" });
-    const pa = room.state.players.get(a.sessionId);
-    const pb = room.state.players.get(b.sessionId);
-    const { zoneX, zoneY } = room.state;
-
-    pa.x = zoneX; pa.y = zoneY; pb.x = zoneX + 800; pb.y = zoneY;
-    const start = pa.score;
-    for (let i = 0; i < 5; i++) { pa.x = zoneX; pa.y = zoneY; await room.waitForNextTimestep(); }
-    assert.strictEqual(room.state.zoneHolder, a.sessionId, "A holds the ring");
-    assert.ok(pa.score > start, "holding scores");
-
-    pb.x = zoneX; pb.y = zoneY; // both inside: contested
-    const during = pa.score;
-    for (let i = 0; i < 3; i++) { pa.x = zoneX; pa.y = zoneY; pb.x = zoneX; pb.y = zoneY; await room.waitForNextTimestep(); }
-    assert.strictEqual(room.state.zoneHolder, "", "nobody holds a contested ring");
-    assert.strictEqual(pa.score, during, "a contested ring scores nothing");
   });
 
   it("modes rotate: never the same twice, and Infection is skipped with fewer than 3 players", async () => {

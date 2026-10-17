@@ -8,10 +8,10 @@ import type { MyRoom } from "../rooms/MyRoom.js";
 import { stepEntity } from "../shared/movement.js";
 import { PLAYER_HALF } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
-import { MODES, modeOf, ZONE_RADIUS } from "../shared/modes.js";
+import { MODES, modeOf } from "../shared/modes.js";
 import {
   createStage, neonBox, loadFx, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, SHADOW_MAP,
+  runLobby, showRoomTag, leaveToLobby, wireBack, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, SHADOW_MAP,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
 import { skinObstacle, rimScenery } from "./scenery.js";
@@ -40,20 +40,13 @@ sun.castShadow = true;
 sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
 scene.add(sun, sun.target);
 
-/** Orb Rush pickups and the King of the Hill ring. They are not part of an arena, so an arena swap leaves them alone. */
+/** Orb Rush pickups. They are not part of an arena, so an arena swap leaves them alone. */
 const orbGroup = new THREE.Group();
 scene.add(orbGroup);
 const orbMeshes = new Map<string, THREE.Mesh>();
 const orbGeometry = new THREE.IcosahedronGeometry(11, 0);
 const orbMaterial = new THREE.MeshBasicMaterial({ color: 0x66ffff });
 const goldMaterial = new THREE.MeshBasicMaterial({ color: 0xffd23f });
-const zoneRing = new THREE.Mesh(new THREE.RingGeometry(ZONE_RADIUS - 5, ZONE_RADIUS, 64), new THREE.MeshBasicMaterial({ color: 0x35e5ff, side: THREE.DoubleSide, transparent: true, opacity: 0.9 }));
-const zoneDisc = new THREE.Mesh(new THREE.CircleGeometry(ZONE_RADIUS, 48), new THREE.MeshBasicMaterial({ color: 0x35e5ff, side: THREE.DoubleSide, transparent: true, opacity: 0.14, depthWrite: false }));
-zoneRing.add(zoneDisc);
-zoneRing.rotation.x = -Math.PI / 2;
-zoneRing.visible = false;
-scene.add(zoneRing);
-
 /** Everything that belongs to the current arena, so it can be swapped for the next one. */
 const arenaGroup = new THREE.Group();
 scene.add(arenaGroup);
@@ -350,10 +343,8 @@ async function main() {
   predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
 
   const input = room.input<MoveInput>({ mode: "reliable" });
-  document.getElementById("roundExit")!.addEventListener("click", () => {
-    try { sessionStorage.removeItem(`seat:${location.pathname}`); } catch { /* private mode */ }
-    void room.leave(); // on purpose, so the server frees the seat now instead of holding it for 30 seconds
-  });
+  wireBack(room);
+  document.getElementById("roundExit")!.addEventListener("click", (e) => { e.preventDefault(); void leaveToLobby(room); });
 
   // The first patch is what creates our own Player.
   statusEl.textContent = "Joining...";
@@ -420,11 +411,10 @@ async function main() {
       .map(([id, p]) => ({ id, name: p.name, hue: p.hue, score: Math.floor(p.score), hot: p.hot }))
       .sort((a, b) => b.score - a.score);
     const mode = room.state.mode;
-    const key = JSON.stringify([rows, mode, room.state.zoneHolder]);
+    const key = JSON.stringify([rows, mode]);
     if (key === boardKey) { return; }
     boardKey = key;
-    const mark = (r: { id: string; hot: boolean }) =>
-      r.hot ? (mode === "infect" ? " [RED]" : " [IT]") : mode === "hill" && r.id === room.state.zoneHolder ? " [KING]" : "";
+    const mark = (r: { hot: boolean }) => (r.hot ? (mode === "infect" ? " [RED]" : " [IT]") : "");
     drawBoard(boardEl, rows.map((r) => ({
       hue: r.hue,
       text: `${r.name}${r.id === room.sessionId ? " (you)" : ""}${mark(r)}: ${r.score}`,
@@ -433,6 +423,27 @@ async function main() {
 
   let shownRound = 0;
   let bannerTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Everyone who joins a room (once per room: a refresh does not repeat it) gets a card explaining the mode and the controls.
+  const introEl = document.getElementById("intro")!;
+  const closeIntro = () => { introEl.hidden = true; };
+  document.getElementById("introClose")!.addEventListener("click", closeIntro);
+  addEventListener("keydown", (e) => { if (e.key === "Escape") { closeIntro(); } });
+  let introSeen = false;
+  try { introSeen = sessionStorage.getItem(`intro:${room.roomId}`) === "1"; sessionStorage.setItem(`intro:${room.roomId}`, "1"); } catch { /* private mode */ }
+  if (!introSeen) {
+    const mode = modeOf(room.state.mode);
+    document.getElementById("introTitle")!.textContent = mode.name;
+    document.getElementById("introRules")!.textContent = mode.rules;
+    const touch = matchMedia("(pointer: coarse)").matches;
+    document.getElementById("introControls")!.textContent =
+      `${touch ? "Drag the stick to move and tap JUMP to jump." : "Move with W A S D or the arrow keys, jump with Space."} ` +
+      (room.state.modeLocked ? "This room keeps one mode." : "The mode changes every round.") +
+      (room.state.locked ? ` It stays on ${arenaOf(room.state.arena).name}.` : " So does the arena.");
+    introEl.hidden = false;
+    shownRound = room.state.round; // the intro already says what this round is, so skip the banner
+    setTimeout(closeIntro, 15000);
+  }
   let last = performance.now();
   let prevWinner = "";
   const zero = new THREE.Vector3();
@@ -475,20 +486,11 @@ async function main() {
     }
     if (room.state.winner) { modeBannerEl.hidden = true; }
 
-    // Orbs spin and bob; the hill ring follows the room's ring and turns gold while someone holds it.
+    // Orbs spin and bob.
     orbMeshes.forEach((mesh, id) => {
       mesh.rotation.y += dt * 2;
       mesh.position.y = mesh.userData.z + 20 + Math.sin(now / 300 + id.length + mesh.position.x) * 4;
     });
-    const hill = room.state.mode === "hill" && !room.state.winner;
-    zoneRing.visible = hill;
-    if (hill) {
-      zoneRing.position.set(room.state.zoneX, 1.2, room.state.zoneY);
-      const held = !!room.state.zoneHolder;
-      (zoneRing.material as THREE.MeshBasicMaterial).color.set(held ? 0xffd23f : 0x35e5ff);
-      (zoneDisc.material as THREE.MeshBasicMaterial).color.set(held ? 0xffd23f : 0x35e5ff);
-    }
-
     for (const [sessionId, player] of room.state.players) {
       const avatar = avatars.get(sessionId);
       if (!avatar) { continue; }

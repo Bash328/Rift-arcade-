@@ -56,10 +56,8 @@ export const MyRoomState = schema({
   round: t.number(),
   /** Orb Rush pickups, keyed by an id. */
   orbs: t.map(Orb),
-  /** King of the Hill: ring centre, and who holds it right now ("" when empty or contested). */
-  zoneX: t.number(),
-  zoneY: t.number(),
-  zoneHolder: t.string(),
+  /** The host picked one mode for this room and it stays that way; otherwise it changes every round. */
+  modeLocked: t.boolean(),
   /** Id of the arena being played, and the one the next round will use. */
   arena: t.string(),
   nextArena: t.string(),

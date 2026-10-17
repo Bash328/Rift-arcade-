@@ -5,7 +5,7 @@ import { InputPacer } from "./inputPacing.js";
 import { stepEntity } from "../shared/movement.js";
 import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
-import { MODES, modeOf, ZONE_RADIUS, ZONE_MOVE_SECONDS, ORB_REACH, ORB_HEIGHT } from "../shared/modes.js";
+import { MODES, modeOf, ORB_REACH, ORB_HEIGHT } from "../shared/modes.js";
 import { sanitizeName } from "../shared/names.js";
 
 /** Public rooms are topped up with bots to this many players, so nobody waits alone. */
@@ -53,7 +53,6 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   private safeId = "";
   private safeLeft = 0;
   private orbSeq = 0;
-  private zoneLeft = 0;
 
   messages = {
     // movement arrives through the input buffer above — register handlers here
@@ -74,6 +73,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.state.nextArena = this.state.arena;
     // The same for the mode: a pick stays, otherwise every round is a different one (the first is plain Cube Tag).
     this.lockedMode = MODES.some((m) => m.id === options?.mode) ? options.mode : undefined;
+    this.state.modeLocked = !!this.lockedMode;
     this.state.mode = this.lockedMode ?? "tag";
     this.state.nextMode = this.state.mode;
     this.roundClock = this.roundSeconds();
@@ -168,7 +168,6 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     switch (this.state.mode) {
       case "orbs": this.stepOrbs(); break;
       case "infect": if (!this.stepInfect(ctx.dt)) { return; } break;
-      case "hill": this.stepHill(ctx.dt); break;
       default: if (!this.stepTag(ctx.dt)) { return; }
     }
 
@@ -223,33 +222,6 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     return true;
   }
 
-  /** King of the Hill: whoever is alone in the ring scores; it moves every ZONE_MOVE_SECONDS. */
-  private stepHill(dt: number) {
-    this.zoneLeft -= dt;
-    if (this.zoneLeft <= 0) { this.moveZone(); }
-    let holder = "";
-    let inside = 0;
-    for (const [sessionId, player] of this.state.players) {
-      if (Math.hypot(player.x - this.state.zoneX, player.y - this.state.zoneY) < ZONE_RADIUS) { inside++; holder = sessionId; }
-    }
-    this.state.zoneHolder = inside === 1 ? holder : "";
-    if (inside === 1) { this.state.players.get(holder)!.score += dt; }
-  }
-
-  private moveZone() {
-    const { width, height } = this.arena;
-    let best = { x: width / 2, y: height / 2 };
-    for (let tries = 0; tries < 40; tries++) {
-      const x = width * (0.15 + Math.random() * 0.7);
-      const y = height * (0.15 + Math.random() * 0.7);
-      const far = Math.hypot(x - this.state.zoneX, y - this.state.zoneY) > 300;
-      if (far && !this.insideObstacle(x, y, 40)) { best = { x, y }; break; }
-    }
-    this.state.zoneX = best.x;
-    this.state.zoneY = best.y;
-    this.zoneLeft = ZONE_MOVE_SECONDS;
-  }
-
   /** Orb Rush: pick up any orb you touch, then keep the field topped up. */
   private stepOrbs() {
     for (const [orbId, orb] of this.state.orbs) {
@@ -261,7 +233,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
         }
       }
     }
-    const want = Math.min(10, 4 + this.state.players.size);
+    const want = Math.min(5, 2 + Math.ceil(this.state.players.size / 2)); // 3 for one or two players, 5 for a full room
     if (this.state.orbs.size < want) { this.spawnOrb(); }
   }
 
@@ -377,29 +349,6 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       return [vx, vy];
     }
 
-    if (this.state.mode === "hill") {
-      // Bots must not all pile into the ring, or it is always contested and nobody scores: one rushes in
-      // when it is empty, the rest wait just outside, and now and then one tries to push the holder out.
-      const zx = this.state.zoneX, zy = this.state.zoneY;
-      const dist = (p: Player) => Math.hypot(p.x - zx, p.y - zy);
-      const toZone: [number, number] = [zx - bot.x, zy - bot.y];
-      const lurk = (): [number, number] => (dist(bot) < ZONE_RADIUS + 60 ? [bot.x - zx, bot.y - zy] : [0, 0]);
-      const mill: [number, number] = [(Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100];
-      const inside = [...this.state.players.entries()].filter(([, p]) => dist(p) < ZONE_RADIUS).map(([pid]) => pid);
-      if (inside.length === 0) {
-        let closest = id;
-        let best = dist(bot);
-        for (const otherId of this.bots.keys()) {
-          const other = this.state.players.get(otherId);
-          if (other && dist(other) < best) { best = dist(other); closest = otherId; }
-        }
-        return closest === id ? toZone : lurk();
-      }
-      if (inside.length === 1 && inside[0] === id) { return dist(bot) > ZONE_RADIUS * 0.6 ? toZone : mill; } // holding it
-      if (inside.includes(id)) { return Math.random() < 0.6 ? [bot.x - zx, bot.y - zy] : mill; } // contested: back off, usually
-      return Math.random() < 0.35 ? toZone : lurk(); // someone else holds it: sometimes contest
-    }
-
     // Cube Tag and Infection: red players chase, everyone else runs.
     if (bot.hot) {
       // Chase the nearest player who can actually be tagged: the one who was just tagged and is protected from tag-backs
@@ -477,13 +426,11 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     for (const player of this.state.players.values()) { player.hot = false; }
     this.state.it = "";
     this.state.orbs.clear();
-    this.state.zoneHolder = "";
     const ids = [...this.state.players.keys()];
     const random = ids.length ? ids[Math.floor(Math.random() * ids.length)] : "";
     switch (this.state.mode) {
       case "tag": if (random) { this.setIt(random); } break;
       case "infect": if (random) { this.state.players.get(random)!.hot = true; } break;
-      case "hill": this.state.zoneX = -1000; this.state.zoneY = -1000; this.moveZone(); break;
     }
   }
 
