@@ -71,6 +71,9 @@
                 <select id="arenaSelect"><option value="">Rotate every round</option></select>
                 <span id="arenaBlurb" class="lobby__hint"></span>
               </label>
+              <label class="lobby__field">Game mode for your own room
+                <select id="modeSelect"><option value="">Rotate every round</option></select>
+              </label>
               <button class="lbtn lbtn--pink" type="submit" value="quick">Quick play</button>
               <button class="lbtn lbtn--cyan" type="submit" value="create">Create private room</button>
               <div class="lobby__join">
@@ -84,6 +87,10 @@
               <p><strong>Want true full screen?</strong> Your browser keeps its address bar in games, but you can add Rift Arcade to your home screen and open it from there with nothing around it.</p>
               <p><b>iPhone:</b> tap Share, then Add to Home Screen.<br /><b>Android:</b> open the browser menu, then Add to Home screen or Install app.</p>
               <button id="fsTipClose" class="lbtn lbtn--pink" type="button">Got it</button>
+            </div>
+            <div id="modeBanner" class="modebanner" role="status" hidden>
+              <p id="modeName" class="modebanner__name"></p>
+              <p id="modeBlurb" class="modebanner__blurb"></p>
             </div>
             <div id="roundEnd" class="roundend" role="status" hidden>
               <p class="roundend__label">Round over</p>
@@ -106,7 +113,7 @@
 
         <section class="placard">
           <h2>HOW TO PLAY</h2>
-          <p>Steer with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, the arrow keys, or drag the joystick, and jump with <kbd>SPACE</kbd> or the JUMP button. The big glowing red cube is IT: touch someone to pass it on. Low steps and walls can be jumped onto; chain them to reach the tall blocks, where nobody on the ground can tag you. Every second you are not IT scores a point, and the highest score after 90 seconds wins. Quick play rooms change arena every round: the classic Neon Grid, floaty Moon Dunes, The Maze, or the slippery Ice Rink. If you create your own room, you pick the arena (or let it change every round). To play with friends, create a private room and tap the ROOM code to share the invite link, or tell them the 4-letter code.</p>
+          <p>Steer with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, the arrow keys, or drag the joystick, and jump with <kbd>SPACE</kbd> or the JUMP button. The big glowing red cube is IT: touch someone to pass it on. Low steps and walls can be jumped onto; chain them to reach the tall blocks, where nobody on the ground can tag you. Every second you are not IT scores a point, and the highest score when the clock runs out wins. Every round is a different mode too: Cube Tag, Orb Rush (collect glowing orbs), Infection (IT spreads by touch) or King of the Hill (hold the ring alone). Quick play rooms change arena every round: the classic Neon Grid, floaty Moon Dunes, The Maze, or the slippery Ice Rink. If you create your own room, you pick the arena (or let it change every round). To play with friends, create a private room and tap the ROOM code to share the invite link, or tell them the 4-letter code.</p>
         </section>
         <div class="cab__base"></div>
       </div>

@@ -549,10 +549,6 @@ export function createAudio() {
   addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() === "m" && (e.target as HTMLElement).tagName !== "INPUT") { toggle(); }
   });
-  // Lobby buttons click.
-  document.addEventListener("click", (e) => {
-    if ((e.target as HTMLElement).closest?.(".lbtn")) { api.play("click", 0.7); }
-  });
 
   const api = {
     /** Which ambient bed to loop ("ice", "moon", "maze", "neon"); anything else is silence. */

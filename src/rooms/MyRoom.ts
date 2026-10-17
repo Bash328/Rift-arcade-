@@ -1,10 +1,11 @@
 import { Room, Client, CloseCode, type StepContext } from "colyseus";
-import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
+import { MyRoomState, Player, Orb, MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { InputPacer } from "./inputPacing.js";
 import { stepEntity } from "../shared/movement.js";
 import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
+import { MODES, modeOf, ZONE_RADIUS, ZONE_MOVE_SECONDS, ORB_REACH, ORB_HEIGHT } from "../shared/modes.js";
 import { sanitizeName } from "../shared/names.js";
 
 /** Public rooms are topped up with bots to this many players, so nobody waits alone. */
@@ -39,8 +40,9 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   private joinCount = 0;
   private cooldown = 0;
   private roundClock = 0;
-  /** Set when a private room's host picked one arena to keep. */
+  /** Set when a private room's host picked one arena (or one mode) to keep. */
   private lockedArena?: string;
+  private lockedMode?: string;
   private overLeft = 0;
   private isPrivate = false;
   private botWait = 0;
@@ -50,6 +52,8 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   /** Whoever was "it" before the last tag, and how long they stay safe from the player who just tagged them. */
   private safeId = "";
   private safeLeft = 0;
+  private orbSeq = 0;
+  private zoneLeft = 0;
 
   messages = {
     // movement arrives through the input buffer above — register handlers here
@@ -68,8 +72,14 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.state.locked = !!this.lockedArena;
     this.state.arena = this.lockedArena ?? this.pickArena("");
     this.state.nextArena = this.state.arena;
-    this.roundClock = this.arena.roundSeconds;
+    // The same for the mode: a pick stays, otherwise every round is a different one (the first is plain Cube Tag).
+    this.lockedMode = MODES.some((m) => m.id === options?.mode) ? options.mode : undefined;
+    this.state.mode = this.lockedMode ?? "tag";
+    this.state.nextMode = this.state.mode;
+    this.roundClock = this.roundSeconds();
     this.state.timeLeft = this.roundClock;
+    this.state.round = 1;
+    this.startMode();
     // One state update per movement step: every update then carries the same distance.
     this.setPatchRate(1000 / TICK_RATE);
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
@@ -91,8 +101,9 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       name: sanitizeName(options?.name),
       hue: (n * 137.5 + 200) % 360,
       pet: n % PETS.length,
+      hot: false,
     }));
-    if (!this.state.it) { this.state.it = client.sessionId; }
+    if (this.state.mode === "tag" && !this.state.it) { this.setIt(client.sessionId); }
   }
 
   onLeave(client: Client, code: CloseCode) {
@@ -104,12 +115,19 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.pacers.delete(id);
     this.state.players.delete(id);
     if (this.state.it === id) {
-      this.state.it = this.state.players.keys().next().value ?? "";
+      const next = this.state.players.keys().next().value;
+      if (next) { this.setIt(next); } else { this.state.it = ""; }
     }
   }
 
   onDispose() {
     console.log("room", this.roomId, "disposing...");
+  }
+
+  /** Cube Tag: make this player "it" (and nobody else red). */
+  private setIt(id: string) {
+    for (const [sessionId, player] of this.state.players) { player.hot = sessionId === id; }
+    this.state.it = id;
   }
 
   /**
@@ -147,29 +165,129 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       return;
     }
 
-    const it = this.state.players.get(this.state.it);
-    if (!it || this.state.players.size < 2) { return; }
+    switch (this.state.mode) {
+      case "orbs": this.stepOrbs(); break;
+      case "infect": if (!this.stepInfect(ctx.dt)) { return; } break;
+      case "hill": this.stepHill(ctx.dt); break;
+      default: if (!this.stepTag(ctx.dt)) { return; }
+    }
 
-    this.cooldown = Math.max(0, this.cooldown - ctx.dt);
-    this.safeLeft = Math.max(0, this.safeLeft - ctx.dt);
+    this.roundClock = Math.max(0, this.roundClock - ctx.dt);
+    this.state.timeLeft = Math.ceil(this.roundClock);
+    if (this.roundClock === 0) { this.endRound(); }
+  }
+
+  /** Cube Tag. Returns false when the round should not advance (nobody to chase). */
+  private stepTag(dt: number) {
+    const it = this.state.players.get(this.state.it);
+    if (!it || this.state.players.size < 2) { return false; }
+
+    this.cooldown = Math.max(0, this.cooldown - dt);
+    this.safeLeft = Math.max(0, this.safeLeft - dt);
     for (const [sessionId, player] of this.state.players) {
       if (sessionId === this.state.it) { continue; }
-      player.score += ctx.dt; // survival time
+      player.score += dt; // survival time
       // ponytail: circle test, tagging the first overlap in map order; fine for 8 players
       // No tag-backs: two players overlapping would otherwise pass "it" back and forth every cooldown.
       if (this.safeLeft > 0 && sessionId === this.safeId) { continue; }
       if (this.cooldown === 0 && Math.hypot(player.x - it.x, player.y - it.y, player.z - it.z) < PLAYER_HALF * 2) {
         this.safeId = this.state.it;
         this.safeLeft = TAG_BACK_BLOCK;
-        this.state.it = sessionId;
+        this.setIt(sessionId);
         this.cooldown = TAG_COOLDOWN;
         break;
       }
     }
+    return true;
+  }
 
-    this.roundClock = Math.max(0, this.roundClock - ctx.dt);
-    this.state.timeLeft = Math.ceil(this.roundClock);
-    if (this.roundClock === 0) { this.endRound(); }
+  /** Infection: the red cube spreads by touch; players still clean score for every second. Ends early when everyone is red. */
+  private stepInfect(dt: number) {
+    const players = [...this.state.players.entries()];
+    if (players.length < 2) { return false; }
+    if (!players.some(([, p]) => p.hot)) { // the infected one left: someone takes their place
+      players[Math.floor(Math.random() * players.length)][1].hot = true;
+    }
+    const sick = players.filter(([, p]) => p.hot);
+    let clean = 0;
+    for (const [, player] of players) {
+      if (player.hot) { continue; }
+      if (sick.some(([, s]) => Math.hypot(player.x - s.x, player.y - s.y, player.z - s.z) < PLAYER_HALF * 2)) {
+        player.hot = true;
+      } else {
+        player.score += dt;
+        clean++;
+      }
+    }
+    if (clean === 0) { this.endRound(); return false; }
+    return true;
+  }
+
+  /** King of the Hill: whoever is alone in the ring scores; it moves every ZONE_MOVE_SECONDS. */
+  private stepHill(dt: number) {
+    this.zoneLeft -= dt;
+    if (this.zoneLeft <= 0) { this.moveZone(); }
+    let holder = "";
+    let inside = 0;
+    for (const [sessionId, player] of this.state.players) {
+      if (Math.hypot(player.x - this.state.zoneX, player.y - this.state.zoneY) < ZONE_RADIUS) { inside++; holder = sessionId; }
+    }
+    this.state.zoneHolder = inside === 1 ? holder : "";
+    if (inside === 1) { this.state.players.get(holder)!.score += dt; }
+  }
+
+  private moveZone() {
+    const { width, height } = this.arena;
+    let best = { x: width / 2, y: height / 2 };
+    for (let tries = 0; tries < 40; tries++) {
+      const x = width * (0.15 + Math.random() * 0.7);
+      const y = height * (0.15 + Math.random() * 0.7);
+      const far = Math.hypot(x - this.state.zoneX, y - this.state.zoneY) > 300;
+      if (far && !this.insideObstacle(x, y, 40)) { best = { x, y }; break; }
+    }
+    this.state.zoneX = best.x;
+    this.state.zoneY = best.y;
+    this.zoneLeft = ZONE_MOVE_SECONDS;
+  }
+
+  /** Orb Rush: pick up any orb you touch, then keep the field topped up. */
+  private stepOrbs() {
+    for (const [orbId, orb] of this.state.orbs) {
+      for (const player of this.state.players.values()) {
+        if (Math.hypot(player.x - orb.x, player.y - orb.y) < ORB_REACH && Math.abs(player.z - orb.z) < ORB_HEIGHT) {
+          player.score += orb.gold ? 3 : 1;
+          this.state.orbs.delete(orbId);
+          break;
+        }
+      }
+    }
+    const want = Math.min(10, 4 + this.state.players.size);
+    if (this.state.orbs.size < want) { this.spawnOrb(); }
+  }
+
+  private spawnOrb() {
+    const arena = this.arena;
+    // A quarter of the orbs sit on top of a block the players can reach (a jump is ~68 high, more in low gravity; 50 leaves room to land).
+    const reachable = arena.obstacles.filter((o) => o.h <= 50 / arena.gravity);
+    if (reachable.length && Math.random() < 0.25) {
+      const o = reachable[Math.floor(Math.random() * reachable.length)];
+      this.state.orbs.set(`o${this.orbSeq++}`, new Orb({
+        x: o.x + (Math.random() - 0.5) * o.hw, y: o.y + (Math.random() - 0.5) * o.hh, z: o.h, gold: Math.random() < 0.3,
+      }));
+      return;
+    }
+    for (let tries = 0; tries < 30; tries++) {
+      const x = 80 + Math.random() * (arena.width - 160);
+      const y = 80 + Math.random() * (arena.height - 160);
+      if (!this.insideObstacle(x, y, 30)) {
+        this.state.orbs.set(`o${this.orbSeq++}`, new Orb({ x, y, z: 0, gold: Math.random() < 0.12 }));
+        return;
+      }
+    }
+  }
+
+  private insideObstacle(x: number, y: number, margin: number) {
+    return this.arena.obstacles.some((o) => Math.abs(x - o.x) < o.hw + margin && Math.abs(y - o.y) < o.hh + margin);
   }
 
   /** Top a public room up to BOT_FILL players with labelled bots, and send one home for every human who joins. */
@@ -199,15 +317,16 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       name: `BOT ${BOT_NAMES[n % BOT_NAMES.length]}`,
       hue: (slot * 137.5 + 200) % 360,
       pet: slot % PETS.length,
+      hot: false,
     }));
     this.bots.set(id, { dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0, scatter: NaN });
-    if (!this.state.it) { this.state.it = id; }
+    if (this.state.mode === "tag" && !this.state.it) { this.setIt(id); }
   }
 
   /**
    * Bots use the same `stepEntity` as everyone. They re-aim only every 0.25-0.45s
-   * and idle now and then, so a human can outmaneuver them; "it" chases the
-   * nearest player, everyone else runs away from "it" and away from the walls.
+   * and idle now and then, so a human can outmaneuver them. What they aim at depends
+   * on the mode (see `steer`).
    */
   private stepBots(dt: number) {
     const arena = this.arena;
@@ -218,39 +337,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       brain.retarget -= dt;
       if (brain.retarget <= 0) {
         brain.retarget = 0.25 + Math.random() * 0.2;
-        let vx = 0, vy = 0;
-        if (id === this.state.it) {
-          // Chase the nearest player who can actually be tagged: the one who was just tagged and is protected from tag-backs
-          // is skipped, or "it" would stand on them until the protection runs out and swap right back.
-          const protectedId = this.safeLeft > 0 ? this.safeId : "";
-          for (const skip of [protectedId, ""]) {
-            let best = Infinity;
-            for (const [otherId, other] of this.state.players) {
-              const d = Math.hypot(other.x - bot.x, other.y - bot.y);
-              if (otherId !== id && otherId !== skip && d < best) { best = d; vx = other.x - bot.x; vy = other.y - bot.y; }
-            }
-            if (best < Infinity) { break; } // with only two players the protected one is the only target
-          }
-        } else {
-          const it = this.state.players.get(this.state.it);
-          if (it && Math.hypot(bot.x - it.x, bot.y - it.y) < 450) {
-            vx = bot.x - it.x; vy = bot.y - it.y;
-            // Standing on top of "it" gives no direction to run: pick one at random and keep it until clear.
-            if (Math.hypot(vx, vy) < 40) {
-              if (Number.isNaN(brain.scatter)) { brain.scatter = Math.random() * Math.PI * 2; }
-              vx = Math.cos(brain.scatter) * 100; vy = Math.sin(brain.scatter) * 100;
-            } else { brain.scatter = NaN; }
-            const edge = 160; // steer back toward the middle when near a wall
-            if (bot.x < edge || bot.x > arena.width - edge) { vx += (arena.width / 2 - bot.x) * 2; }
-            if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
-          }
-          // Don't pile up on another runner (even when nobody is chasing): bots on top of each other look like one glitching cube.
-          for (const [otherId, other] of this.state.players) {
-            if (otherId === id || otherId === this.state.it) { continue; }
-            const gap = Math.hypot(bot.x - other.x, bot.y - other.y);
-            if (gap < 90) { vx += ((bot.x - other.x) / (gap || 1)) * 400; vy += ((bot.y - other.y) / (gap || 1)) * 400; }
-          }
-        }
+        const [vx, vy] = this.steer(id, bot, brain);
         const idle = Math.random() < 0.04;
         brain.dirX = idle || Math.abs(vx) < 20 ? 0 : Math.sign(vx);
         brain.dirY = idle || Math.abs(vy) < 20 ? 0 : Math.sign(vy);
@@ -275,6 +362,86 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     }
   }
 
+  /** Where a bot wants to go, as a direction (it is quantised to the -1/0/1 inputs a player has). */
+  private steer(id: string, bot: Player, brain: BotBrain): [number, number] {
+    const arena = this.arena;
+    let vx = 0, vy = 0;
+
+    if (this.state.mode === "orbs") {
+      // The nearest orb on the ground (bots do not plan jumps onto blocks).
+      let best = Infinity;
+      for (const orb of this.state.orbs.values()) {
+        const d = Math.hypot(orb.x - bot.x, orb.y - bot.y);
+        if (orb.z === 0 && d < best) { best = d; vx = orb.x - bot.x; vy = orb.y - bot.y; }
+      }
+      return [vx, vy];
+    }
+
+    if (this.state.mode === "hill") {
+      // Bots must not all pile into the ring, or it is always contested and nobody scores: one rushes in
+      // when it is empty, the rest wait just outside, and now and then one tries to push the holder out.
+      const zx = this.state.zoneX, zy = this.state.zoneY;
+      const dist = (p: Player) => Math.hypot(p.x - zx, p.y - zy);
+      const toZone: [number, number] = [zx - bot.x, zy - bot.y];
+      const lurk = (): [number, number] => (dist(bot) < ZONE_RADIUS + 60 ? [bot.x - zx, bot.y - zy] : [0, 0]);
+      const mill: [number, number] = [(Math.random() - 0.5) * 100, (Math.random() - 0.5) * 100];
+      const inside = [...this.state.players.entries()].filter(([, p]) => dist(p) < ZONE_RADIUS).map(([pid]) => pid);
+      if (inside.length === 0) {
+        let closest = id;
+        let best = dist(bot);
+        for (const otherId of this.bots.keys()) {
+          const other = this.state.players.get(otherId);
+          if (other && dist(other) < best) { best = dist(other); closest = otherId; }
+        }
+        return closest === id ? toZone : lurk();
+      }
+      if (inside.length === 1 && inside[0] === id) { return dist(bot) > ZONE_RADIUS * 0.6 ? toZone : mill; } // holding it
+      if (inside.includes(id)) { return Math.random() < 0.6 ? [bot.x - zx, bot.y - zy] : mill; } // contested: back off, usually
+      return Math.random() < 0.35 ? toZone : lurk(); // someone else holds it: sometimes contest
+    }
+
+    // Cube Tag and Infection: red players chase, everyone else runs.
+    if (bot.hot) {
+      // Chase the nearest player who can actually be tagged: the one who was just tagged and is protected from tag-backs
+      // is skipped, or "it" would stand on them until the protection runs out and swap right back.
+      const protectedId = this.safeLeft > 0 ? this.safeId : "";
+      for (const skip of [protectedId, ""]) {
+        let best = Infinity;
+        for (const [otherId, other] of this.state.players) {
+          const d = Math.hypot(other.x - bot.x, other.y - bot.y);
+          if (otherId !== id && otherId !== skip && !other.hot && d < best) { best = d; vx = other.x - bot.x; vy = other.y - bot.y; }
+        }
+        if (best < Infinity) { break; } // with only two players the protected one is the only target
+      }
+      return [vx, vy];
+    }
+
+    let threat: Player | undefined;
+    let nearest = Infinity;
+    for (const other of this.state.players.values()) {
+      const d = Math.hypot(bot.x - other.x, bot.y - other.y);
+      if (other.hot && d < nearest) { nearest = d; threat = other; }
+    }
+    if (threat && nearest < 450) {
+      vx = bot.x - threat.x; vy = bot.y - threat.y;
+      // Standing on top of a chaser gives no direction to run: pick one at random and keep it until clear.
+      if (nearest < 40) {
+        if (Number.isNaN(brain.scatter)) { brain.scatter = Math.random() * Math.PI * 2; }
+        vx = Math.cos(brain.scatter) * 100; vy = Math.sin(brain.scatter) * 100;
+      } else { brain.scatter = NaN; }
+      const edge = 160; // steer back toward the middle when near a wall
+      if (bot.x < edge || bot.x > arena.width - edge) { vx += (arena.width / 2 - bot.x) * 2; }
+      if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
+    }
+    // Don't pile up on another runner (even when nobody is chasing): bots on top of each other look like one glitching cube.
+    for (const [otherId, other] of this.state.players) {
+      if (otherId === id || other.hot) { continue; }
+      const gap = Math.hypot(bot.x - other.x, bot.y - other.y);
+      if (gap < 90) { vx += ((bot.x - other.x) / (gap || 1)) * 400; vy += ((bot.y - other.y) / (gap || 1)) * 400; }
+    }
+    return [vx, vy];
+  }
+
   private endRound() {
     let best: Player | undefined;
     for (const player of this.state.players.values()) {
@@ -283,21 +450,44 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.state.winner = best?.name ?? "";
     this.overLeft = ROUND_END_PAUSE;
     this.state.nextIn = ROUND_END_PAUSE;
-    // A room the host locked stays put; any other moves on to a different arena.
+    // A room the host locked stays put; any other moves on to a different arena and mode.
     this.state.nextArena = this.lockedArena ?? this.pickArena(this.state.arena);
+    this.state.nextMode = this.lockedMode ?? this.pickMode(this.state.mode);
   }
 
   private newRound() {
     for (const player of this.state.players.values()) { player.score = 0; }
     this.state.arena = this.state.nextArena;
-    this.roundClock = this.arena.roundSeconds;
+    this.state.mode = this.state.nextMode;
+    // The mode chosen at the end of the last round may no longer have enough players.
+    if (modeOf(this.state.mode).minPlayers > this.state.players.size && !this.lockedMode) { this.state.mode = "tag"; }
+    this.state.round++;
+    this.roundClock = this.roundSeconds();
     this.state.timeLeft = this.roundClock;
     this.state.winner = "";
     this.state.nextIn = 0;
     this.cooldown = 0;
     this.safeLeft = 0;
     this.respawn();
+    this.startMode();
   }
+
+  /** Reset what belongs to the mode that is about to be played. */
+  private startMode() {
+    for (const player of this.state.players.values()) { player.hot = false; }
+    this.state.it = "";
+    this.state.orbs.clear();
+    this.state.zoneHolder = "";
+    const ids = [...this.state.players.keys()];
+    const random = ids.length ? ids[Math.floor(Math.random() * ids.length)] : "";
+    switch (this.state.mode) {
+      case "tag": if (random) { this.setIt(random); } break;
+      case "infect": if (random) { this.state.players.get(random)!.hot = true; } break;
+      case "hill": this.state.zoneX = -1000; this.state.zoneY = -1000; this.moveZone(); break;
+    }
+  }
+
+  private roundSeconds() { return modeOf(this.state.mode).seconds ?? this.arena.roundSeconds; }
 
   private get arena(): Arena { return arenaOf(this.state.arena); }
 
@@ -305,6 +495,12 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   private pickArena(not: string): string {
     const options = ARENAS.filter((a) => a.id !== not);
     return options[Math.floor(Math.random() * options.length)].id;
+  }
+
+  /** A random mode other than `not` that has enough players in the room (Cube Tag if none do). */
+  private pickMode(not: string): string {
+    const options = MODES.filter((m) => m.id !== not && m.minPlayers <= this.state.players.size);
+    return options.length ? options[Math.floor(Math.random() * options.length)].id : "tag";
   }
 
   private spawnPoint(angle: number) {

@@ -17,6 +17,15 @@ export const MoveInput = schema({
 });
 export type MoveInput = SchemaType<typeof MoveInput>;
 
+/** An Orb Rush pickup. `z` is the height of the surface it floats over. */
+export const Orb = schema({
+  x: t.number(),
+  y: t.number(),
+  z: t.number(),
+  gold: t.boolean(),
+});
+export type Orb = SchemaType<typeof Orb>;
+
 export const Player = schema({
   x: t.number(),
   y: t.number(),
@@ -31,14 +40,26 @@ export const Player = schema({
   hue: t.number(),
   /** Index into PETS: which animal this player is. */
   pet: t.number(),
+  /** Marked red: "it" in Cube Tag, infected in Infection. */
+  hot: t.boolean(),
 });
 export type Player = SchemaType<typeof Player>;
 
 export const MyRoomState = schema({
 
   players: t.map(Player),
-  /** sessionId of the player who is "it" ("" when the room is empty). */
+  /** sessionId of the player who is "it" in Cube Tag ("" in the other modes). */
   it: t.string(),
+  /** Mode being played (see shared/modes.ts), the one the next round will use, and a counter that goes up every round. */
+  mode: t.string(),
+  nextMode: t.string(),
+  round: t.number(),
+  /** Orb Rush pickups, keyed by an id. */
+  orbs: t.map(Orb),
+  /** King of the Hill: ring centre, and who holds it right now ("" when empty or contested). */
+  zoneX: t.number(),
+  zoneY: t.number(),
+  zoneHolder: t.string(),
   /** Id of the arena being played, and the one the next round will use. */
   arena: t.string(),
   nextArena: t.string(),

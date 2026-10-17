@@ -474,4 +474,82 @@ describe("testing your Colyseus app", () => {
     for (let i = 0; i < 6 && room.state.winner; i++) { await room.waitForNextTimestep(); }
     assert.strictEqual(room.state.nextIn, 0, "the countdown clears when the next round starts");
   });
+
+  it("Orb Rush: orbs appear, touching one scores (gold is worth 3) and a new one replaces it", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic", mode: "orbs" });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const pa = room.state.players.get(a.sessionId);
+    for (let i = 0; i < 8; i++) { await room.waitForNextTimestep(); }
+    assert.ok(room.state.orbs.size >= 4, `orbs on the field: ${room.state.orbs.size}`);
+
+    const [id, orb] = [...room.state.orbs.entries()][0];
+    const worth = orb.gold ? 3 : 1;
+    pa.x = orb.x; pa.y = orb.y; pa.z = orb.z;
+    const before = pa.score;
+    await room.waitForNextTimestep();
+    assert.ok(!room.state.orbs.has(id), "the orb is picked up");
+    assert.ok(pa.score >= before + worth, `scored ${pa.score - before}, expected at least ${worth}`);
+    for (let i = 0; i < 4; i++) { await room.waitForNextTimestep(); }
+    assert.ok(room.state.orbs.size >= 4, "the field is topped up again");
+  });
+
+  it("Infection: one red cube spreads by touch, clean players score, and the round ends when all are red", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic", mode: "infect" });
+    const ids = [(await colyseus.connectTo(room, { name: "A" })).sessionId, (await colyseus.connectTo(room, { name: "B" })).sessionId, (await colyseus.connectTo(room, { name: "C" })).sessionId];
+    const players = ids.map((id) => room.state.players.get(id));
+    (room as any).startMode(); // everyone is in: pick the first infected
+    const red = () => players.filter((p) => p.hot).length;
+    assert.strictEqual(red(), 1, "one infected to start");
+
+    const sick = players.find((p) => p.hot)!;
+    const clean = players.filter((p) => !p.hot);
+    clean[0].x = sick.x; clean[0].y = sick.y; clean[0].z = sick.z;
+    clean[1].x = sick.x + 600; clean[1].y = sick.y;
+    await room.waitForNextTimestep();
+    assert.strictEqual(red(), 2, "the touch spreads it");
+    assert.ok(clean[1].score > 0 || !clean[1].hot, "players still clean keep scoring");
+
+    clean[1].x = sick.x; clean[1].y = sick.y; clean[1].z = sick.z;
+    for (let i = 0; i < 4 && !room.state.winner; i++) { await room.waitForNextTimestep(); }
+    assert.strictEqual(red(), 3, "everyone is red");
+    assert.ok(room.state.winner, "the round ends early");
+  });
+
+  it("King of the Hill: only a player alone in the ring scores", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic", mode: "hill" });
+    const a = await colyseus.connectTo(room, { name: "A" });
+    const b = await colyseus.connectTo(room, { name: "B" });
+    const pa = room.state.players.get(a.sessionId);
+    const pb = room.state.players.get(b.sessionId);
+    const { zoneX, zoneY } = room.state;
+
+    pa.x = zoneX; pa.y = zoneY; pb.x = zoneX + 800; pb.y = zoneY;
+    const start = pa.score;
+    for (let i = 0; i < 5; i++) { pa.x = zoneX; pa.y = zoneY; await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.zoneHolder, a.sessionId, "A holds the ring");
+    assert.ok(pa.score > start, "holding scores");
+
+    pb.x = zoneX; pb.y = zoneY; // both inside: contested
+    const during = pa.score;
+    for (let i = 0; i < 3; i++) { pa.x = zoneX; pa.y = zoneY; pb.x = zoneX; pb.y = zoneY; await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.zoneHolder, "", "nobody holds a contested ring");
+    assert.strictEqual(pa.score, during, "a contested ring scores nothing");
+  });
+
+  it("modes rotate: never the same twice, and Infection is skipped with fewer than 3 players", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic" });
+    await colyseus.connectTo(room, { name: "A" });
+    await colyseus.connectTo(room, { name: "B" });
+    assert.strictEqual(room.state.mode, "tag", "the first round is plain Cube Tag");
+    for (let i = 0; i < 40; i++) {
+      const next = (room as any).pickMode(room.state.mode);
+      assert.notStrictEqual(next, room.state.mode, "a different mode each round");
+      assert.notStrictEqual(next, "infect", "Infection needs 3 players");
+    }
+
+    const locked = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic", mode: "orbs" });
+    await colyseus.connectTo(locked, { name: "A" });
+    (locked as any).endRound();
+    assert.strictEqual(locked.state.nextMode, "orbs", "a host-locked mode stays");
+  });
 });
