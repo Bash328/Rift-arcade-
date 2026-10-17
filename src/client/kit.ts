@@ -256,6 +256,8 @@ export interface JoinFns<R> {
   quick(name: string): Promise<R>;
   create(name: string): Promise<R>;
   byId(code: string, name: string): Promise<R>;
+  /** Take the old seat back after an accidental refresh, if the game's room holds seats for a while. */
+  reconnect?(token: string): Promise<R>;
 }
 
 const cleanCode = (value: string) => value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
@@ -269,7 +271,7 @@ function savedName(): string {
  * shareable code, or join a friend's code. An invite link (?room=CODE) joins
  * straight away once a name is known. Resolves with the joined room.
  */
-export function runLobby<R>(join: JoinFns<R>): Promise<R> {
+export function runLobby<R extends { reconnectionToken: string }>(join: JoinFns<R>): Promise<R> {
   const lobbyEl = byId<HTMLFormElement>("lobby");
   const nameEl = byId<HTMLInputElement>("nameInput");
   const codeEl = byId<HTMLInputElement>("codeInput");
@@ -279,7 +281,22 @@ export function runLobby<R>(join: JoinFns<R>): Promise<R> {
   nameEl.value = savedName();
   codeEl.value = cleanCode(new URLSearchParams(location.search).get("room") ?? "");
 
+  // One seat per tab and game: sessionStorage survives a refresh but not a new tab.
+  const seatKey = `seat:${location.pathname}`;
+  const seat = {
+    get: () => { try { return sessionStorage.getItem(seatKey); } catch { return null; } },
+    set: (token: string) => { try { sessionStorage.setItem(seatKey, token); } catch { /* private mode: no resume */ } },
+    clear: () => { try { sessionStorage.removeItem(seatKey); } catch { /* ignore */ } },
+  };
+
   return new Promise((resolve) => {
+    function joined(room: R) {
+      seat.set(room.reconnectionToken);
+      lobbyEl.hidden = true;
+      cabEl.classList.remove("lobbying");
+      resolve(room);
+    }
+
     async function enter(how: string) {
       // On a phone, go fullscreen and landscape. Needs the tap that got us here,
       // so it comes before any await; unsupported browsers (iPhone) just skip it.
@@ -298,9 +315,7 @@ export function runLobby<R>(join: JoinFns<R>): Promise<R> {
         const room = how === "create" ? await join.create(name)
           : how === "join" ? await join.byId(code, name)
           : await join.quick(name);
-        lobbyEl.hidden = true;
-        cabEl.classList.remove("lobbying");
-        resolve(room);
+        joined(room);
       } catch (e) {
         console.error(e);
         msgEl.textContent = how === "join" ? "No open room with that code." : "Could not connect. Try again.";
@@ -316,8 +331,16 @@ export function runLobby<R>(join: JoinFns<R>): Promise<R> {
     });
     codeEl.addEventListener("input", () => { codeEl.value = cleanCode(codeEl.value); });
 
-    if (codeEl.value.length === 4 && nameEl.value) { void enter("join"); }
-    else if (codeEl.value) { msgEl.textContent = `Invited to room ${codeEl.value}. Enter your name, then Join.`; }
+    const autoJoin = () => {
+      if (codeEl.value.length === 4 && nameEl.value) { void enter("join"); }
+      else if (codeEl.value) { msgEl.textContent = `Invited to room ${codeEl.value}. Enter your name, then Join.`; }
+    };
+    // A refresh drops the connection but the server holds the seat: resume it instead of joining as a new player.
+    const token = seat.get();
+    if (token && join.reconnect) {
+      lobbyEl.classList.add("busy");
+      join.reconnect(token).then(joined, () => { seat.clear(); lobbyEl.classList.remove("busy"); autoJoin(); });
+    } else { autoJoin(); }
   });
 }
 

@@ -134,7 +134,7 @@ describe("testing your Colyseus app", () => {
 
     stepEntity(e, right, dt, ice);
     assert.ok(e.vx > 0 && e.vx < PLAYER_SPEED * 0.2, "speeds up gradually, not instantly");
-    for (let i = 0; i < 40; i++) { stepEntity(e, right, dt, ice); }
+    for (let i = 0; i < 70; i++) { stepEntity(e, right, dt, ice); }
     assert.ok(e.vx > PLAYER_SPEED * 0.95, "reaches nearly full speed");
     stepEntity(e, idle, dt, ice);
     assert.ok(e.vx > PLAYER_SPEED * 0.5, "keeps sliding after you let go");

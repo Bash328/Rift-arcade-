@@ -116,7 +116,7 @@ export function skinObstacle(parent: THREE.Object3D, o: Obstacle, theme: ArenaTh
 
 /** Boulders, ice shards or trees scattered around the sides and back of the arena, never in front where the camera is. */
 export function rimScenery(parent: THREE.Object3D, W: number, H: number, look: Look, lite: boolean) {
-  const count = lite ? 14 : 30;
+  const count = (look === "ice" ? 44 : 30) >> (lite ? 1 : 0);
   for (let n = 0; n < count; n++) {
     let x: number, z: number;
     do { x = -380 + rnd(W + 760); z = -420 + rnd(H + 420); } while (x >= -50 && x <= W + 50 && z >= -50);
@@ -142,6 +142,14 @@ export function rimScenery(parent: THREE.Object3D, W: number, H: number, look: L
       const top = new THREE.Mesh(new THREE.ConeGeometry(30 + rnd(15), 90 + rnd(30), 7), foliage);
       top.position.y = 45 + 120 + 30;
       item.add(trunk, low, top);
+    }
+    if (look === "ice" && n % 2) {
+      // Every other piece of ice scenery is a snow drift instead.
+      item.clear();
+      const r = 60 + rnd(110);
+      const drift = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 8), new THREE.MeshStandardMaterial({ color: 0xe4f0fa, roughness: 1 }));
+      drift.scale.y = 0.3 + rnd(0.15); drift.position.y = -4;
+      item.add(drift);
     }
     item.traverse((m) => { m.castShadow = true; });
     parent.add(item);

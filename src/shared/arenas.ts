@@ -131,13 +131,13 @@ const MAZE: Arena = {
   ], W, H),
 };
 
-/** Velocity takes ~0.4 seconds to follow your steering: you slide, and walls stop you dead. */
+/** Velocity takes ~0.65 seconds to follow your steering: you slide a long way, and walls stop you dead. The hardest arena. */
 const ICE: Arena = {
   id: "ice",
   name: "Ice Rink",
-  blurb: "Slippery floor: commit to every turn and use the walls to stop.",
+  blurb: "The hardest arena: very slippery floor and a crowd of obstacles. Plan every turn.",
   width: W, height: H, spawnRadius: 170,
-  gravity: 1, jump: 1, slide: 0.4, roundSeconds: 90,
+  gravity: 1, jump: 1, slide: 0.65, roundSeconds: 90,
   theme: { edge: 0x9fe9ff, rim: 0xffffff, grid: 0x6fd0ff, slab: 0x0a1a2e, block: 0x8fd0f2, fog: 0x4f7ea3, floor: "ice",
     sky: ["#071a33", "#1b4a73", "#9fd0ea"], hemi: [0xbfe6ff, 0x405870, 0.5], sun: [0xdff3ff, 0.9], bloom: 1.2 },
   obstacles: mirrored([
@@ -148,6 +148,13 @@ const ICE: Arena = {
     { x: 80, y: 260, hw: 20, hh: 60, h: 50 },
     { x: 360, y: 90, hw: 50, hh: 14, h: 45 },
     { x: 680, y: 300, hw: 24, hh: 50, h: 50 },
+    { x: 700, y: 90, hw: 18, hh: 18, h: 60 },
+    { x: 130, y: 120, hw: 25, hh: 25, h: 60 },
+    { x: 250, y: 400, hw: 22, hh: 22, h: 55 },
+    { x: 350, y: 340, hw: 18, hh: 18, h: 60 },
+    { x: 590, y: 370, hw: 20, hh: 20, h: 55 },
+    { x: 500, y: 280, hw: 30, hh: 12, h: 45 },
+    { x: 110, y: 380, hw: 14, hh: 14, h: 70 },
   ], W, H),
 };
 
