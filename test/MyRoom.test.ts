@@ -309,4 +309,17 @@ describe("testing your Colyseus app", () => {
     for (let i = 0; i < 90 && !locked.state.winner; i++) { await locked.waitForNextTimestep(); }
     assert.strictEqual(locked.state.nextArena, "ice", "a locked room keeps its arena");
   });
+
+  it("quick play matches players who pick the same arena, and keeps others apart", async () => {
+    const a = await colyseus.sdk.joinOrCreate("my_room", { name: "A", arena: "ice" });
+    const b = await colyseus.sdk.joinOrCreate("my_room", { name: "B", arena: "ice" });
+    const c = await colyseus.sdk.joinOrCreate("my_room", { name: "C", arena: "moon" });
+    const d = await colyseus.sdk.joinOrCreate("my_room", { name: "D", arena: "" });
+    assert.strictEqual(a.roomId, b.roomId, "same arena pick shares a room");
+    assert.notStrictEqual(c.roomId, a.roomId, "a different pick gets its own room");
+    assert.notStrictEqual(d.roomId, a.roomId, "rotating players are not put in a locked room");
+    assert.notStrictEqual(d.roomId, c.roomId);
+    assert.strictEqual((a.state as any).arena, "ice");
+    assert.strictEqual((c.state as any).arena, "moon");
+  });
 });

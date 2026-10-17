@@ -110,9 +110,18 @@ buildArena(arenaOf("classic")); // the lobby shows this until the room says whic
 
 // Private rooms: the host can lock one arena, or leave it rotating.
 const arenaSelect = document.getElementById("arenaSelect") as HTMLSelectElement;
+const arenaBlurb = document.getElementById("arenaBlurb")!;
 for (const a of ARENAS) { arenaSelect.append(new Option(a.name, a.id)); }
+try { arenaSelect.value = localStorage.getItem("arena") ?? ""; } catch { /* private mode */ }
+const showBlurb = () => {
+  arenaBlurb.textContent = arenaSelect.value ? ARENAS.find((a) => a.id === arenaSelect.value)?.blurb ?? "" : "A different arena every round.";
+  try { localStorage.setItem("arena", arenaSelect.value); } catch { /* private mode */ }
+};
+arenaSelect.addEventListener("change", showBlurb);
+showBlurb();
 
-const quickPlay = (name: string) => client.joinOrCreate("my_room", { name });
+// The arena picked in the lobby applies to quick play too: players who pick the same one are matched together.
+const quickPlay = (name: string) => client.joinOrCreate("my_room", { name, arena: arenaSelect.value });
 type GameRoom = Awaited<ReturnType<typeof quickPlay>>;
 
 async function main() {

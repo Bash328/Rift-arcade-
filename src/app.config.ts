@@ -48,7 +48,7 @@ const server = defineServer({
    * Define your room handlers:
    */
   rooms: {
-    my_room: defineRoom(MyRoom).enableRealtimeListing(),
+    my_room: defineRoom(MyRoom).filterBy(["arena"]).enableRealtimeListing(),
     void_room: defineRoom(VoidRoom).enableRealtimeListing(),
     lobby: defineRoom(LobbyRoom),
   },
