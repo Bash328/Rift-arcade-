@@ -664,7 +664,8 @@ export function createFullscreen() {
  * the numbers to compare across devices and releases. Does nothing otherwise.
  */
 export function createDebugHud(arenaEl: HTMLElement, renderer: THREE.WebGLRenderer, renderScale: () => number) {
-  if (!new URLSearchParams(location.search).has("debug")) { return { frame(_ms: number) { /* off */ } }; }
+  type Watched = { ping(callback: (ms: number) => void): void; onStateChange(callback: () => void): unknown };
+  if (!new URLSearchParams(location.search).has("debug")) { return { frame(_ms: number) { /* off */ }, watch(_room: Watched) { /* off */ } }; }
 
   const el = document.createElement("pre");
   el.className = "debughud";
@@ -672,8 +673,25 @@ export function createDebugHud(arenaEl: HTMLElement, renderer: THREE.WebGLRender
   renderer.info.autoReset = false; // one composer.render() is several passes; count them all
   const times: number[] = [];
   let n = 0;
+  // Network: round-trip time from a ping every 2s (jitter = mean change between pings) and how many state updates arrive per second.
+  const pings: number[] = [];
+  let updates = 0;
+  let updateRate = 0;
+  setInterval(() => { updateRate = updates; updates = 0; }, 1000);
+  const netLine = () => {
+    if (!pings.length) { return "net: waiting for ping"; }
+    const rtt = pings.reduce((a, b) => a + b, 0) / pings.length;
+    const jitter = pings.length < 2 ? 0 : pings.slice(1).reduce((sum, p, i) => sum + Math.abs(p - pings[i]), 0) / (pings.length - 1);
+    return `net rtt ${rtt.toFixed(0)} ms  jitter ${jitter.toFixed(0)} ms  updates ${updateRate}/s`;
+  };
 
   return {
+    watch(room: Watched) {
+      room.onStateChange(() => { updates++; });
+      const poll = () => room.ping((ms) => { pings.push(ms); if (pings.length > 10) { pings.shift(); } });
+      poll();
+      setInterval(poll, 2000);
+    },
     frame(ms: number) {
       times.push(ms);
       if (times.length > 120) { times.shift(); }
@@ -690,7 +708,8 @@ export function createDebugHud(arenaEl: HTMLElement, renderer: THREE.WebGLRender
         `frame ${at(0.5)} ms (p95 ${at(0.95)})  ${(1000 / Number(at(0.5))).toFixed(0)} fps\n` +
         `calls ${calls}  tris ${triangles}\n` +
         `geometries ${memory.geometries}  textures ${memory.textures}\n` +
-        `render scale ${renderScale().toFixed(2)}`;
+        `render scale ${renderScale().toFixed(2)}\n` +
+        netLine();
     },
   };
 }

@@ -307,6 +307,7 @@ async function main() {
   });
   showRoomTag(room, "Cube Tag");
   audio.play("join");
+  debug.watch(room);
   // Others are drawn `delay` ms behind the newest update so a late or bunched-up one does not show.
   // Updates arrive every ~33 ms, so 100 ms is a cushion of 3 updates; phones get a little more.
   const predict = Predict.get(room, { mode: "lerp", delay: LITE ? 130 : 100 });

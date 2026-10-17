@@ -10,6 +10,7 @@ import type { VoidState } from "../src/rooms/schema/VoidState.js";
 import { PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
 import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
 import { inputBudget } from "../src/rooms/inputPacing.js";
+import { sanitizeName, FALLBACK_NAME } from "../src/shared/names.js";
 
 const classic = ARENA_BY_ID.classic;
 /** The layouts are drawn for a 1500-wide arena; block positions scale with the real width (sizes do not). */
@@ -357,5 +358,51 @@ describe("testing your Colyseus app", () => {
   it("input pacing: one input a tick, two while a backlog has built up", () => {
     assert.deepStrictEqual([0, 1, 2].map(inputBudget), [1, 1, 1]);
     assert.deepStrictEqual([3, 8, 40].map(inputBudget), [2, 2, 2]);
+  });
+
+  it("names: tidied, capped at 12, and a blocked or empty name becomes Player", () => {
+    assert.strictEqual(sanitizeName("  Ann   Lee  "), "Ann Lee");
+    assert.strictEqual(sanitizeName("a​b‮c"), "abc", "invisible and direction characters are dropped");
+    assert.strictEqual(sanitizeName("x".repeat(30)).length, 12);
+    assert.strictEqual(sanitizeName(""), FALLBACK_NAME);
+    assert.strictEqual(sanitizeName(undefined), FALLBACK_NAME);
+    assert.strictEqual(sanitizeName("f.u.c.k"), FALLBACK_NAME, "punctuation does not hide a word");
+    assert.strictEqual(sanitizeName("Sh1t"), FALLBACK_NAME, "look-alike characters do not either");
+    assert.strictEqual(sanitizeName("Nova"), "Nova");
+  });
+
+  it("bots: a lonely player in a public room gets bots, a joining human sends one home, private rooms get none", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { arena: "classic" });
+    await colyseus.connectTo(room, { name: "Ann" });
+    const bots = () => [...room.state.players.values()].filter((p) => p.name.startsWith("BOT "));
+    const settle = async (done: () => boolean) => {
+      for (let i = 0; i < 40 && !done(); i++) { await room.waitForNextTimestep(); }
+    };
+
+    assert.strictEqual(bots().length, 0, "no bots at first");
+    (room as any).botWait = 100; // skip the wait for the first bot
+    await settle(() => bots().length >= 1);
+    assert.strictEqual(bots().length, 1, "the first bot arrives");
+    (room as any).botWait = 100;
+    await settle(() => bots().length >= 2);
+    (room as any).botWait = 100;
+    await settle(() => bots().length >= 3);
+    assert.strictEqual(bots().length, 3, "topped up to 4 players");
+    assert.ok(room.state.players.size >= 4);
+
+    const bot = bots()[0];
+    const before = { x: bot.x, y: bot.y };
+    for (let i = 0; i < 15; i++) { await room.waitForNextTimestep(); }
+    assert.ok(Math.hypot(bot.x - before.x, bot.y - before.y) > 0 || room.state.it !== "", "bots are driven by the room");
+
+    await colyseus.connectTo(room, { name: "Bo" });
+    await settle(() => bots().length <= 2);
+    assert.strictEqual(bots().length, 2, "one bot left when a second human joined");
+
+    const priv = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic" });
+    await colyseus.connectTo(priv, { name: "Cy" });
+    (priv as any).botWait = 100;
+    for (let i = 0; i < 10; i++) { await priv.waitForNextTimestep(); }
+    assert.strictEqual(priv.state.players.size, 1, "private rooms never get bots");
   });
 });

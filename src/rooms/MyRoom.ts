@@ -5,6 +5,17 @@ import { inputBudget } from "./inputPacing.js";
 import { stepEntity } from "../shared/movement.js";
 import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
+import { sanitizeName } from "../shared/names.js";
+
+/** Public rooms are topped up with bots to this many players, so nobody waits alone. */
+const BOT_FILL = 4;
+/** Seconds before the first bot joins a lonely player, then between the rest. */
+const BOT_FIRST_DELAY = 6;
+const BOT_NEXT_DELAY = 2;
+const BOT_NAMES = ["Pip", "Moss", "Dot", "Bolt", "Zig", "Fizz", "Nova", "Taco"];
+
+/** What a bot is doing: how it steers, and a stuck check that makes it hop and turn. */
+interface BotBrain { dirX: number; dirY: number; retarget: number; stuckClock: number; lastX: number; lastY: number; unstick: number; altX: number; altY: number }
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
@@ -28,6 +39,10 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   /** Set when a private room's host picked one arena to keep. */
   private lockedArena?: string;
   private overLeft = 0;
+  private isPrivate = false;
+  private botWait = 0;
+  private botCount = 0;
+  private bots = new Map<string, BotBrain>();
 
   messages = {
     // movement arrives through the input buffer above — register handlers here
@@ -38,7 +53,8 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     assertRoomCapacity();
     // The room id doubles as the invite code. Private rooms skip quick-play matchmaking.
     this.roomId = await freeRoomCode();
-    if (options?.private) { await this.setPrivate(true); }
+    this.isPrivate = !!options?.private;
+    if (this.isPrivate) { await this.setPrivate(true); }
     // The host (whoever creates the room) picks the arena, and it is the arena from the very
     // start, so the waiting area is the real thing. With no pick, every round gets a different one.
     this.lockedArena = ARENAS.some((a) => a.id === options?.arena) ? options.arena : undefined;
@@ -65,7 +81,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       z: 0,
       vz: 0,
       score: 0,
-      name: String(options?.name ?? "").trim().slice(0, 12) || "Player",
+      name: sanitizeName(options?.name),
       hue: (n * 137.5 + 200) % 360,
       pet: n % PETS.length,
     }));
@@ -74,8 +90,12 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
 
   onLeave(client: Client, code: CloseCode) {
     console.log(client.sessionId, "left!", code);
-    this.state.players.delete(client.sessionId);
-    if (this.state.it === client.sessionId) {
+    this.removePlayer(client.sessionId);
+  }
+
+  private removePlayer(id: string) {
+    this.state.players.delete(id);
+    if (this.state.it === id) {
       this.state.it = this.state.players.keys().next().value ?? "";
     }
   }
@@ -101,6 +121,9 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       }
     }
 
+    this.manageBots(ctx.dt);
+    this.stepBots(ctx.dt);
+
     if (this.overLeft > 0) {
       this.overLeft -= ctx.dt;
       if (this.overLeft <= 0) { this.newRound(); }
@@ -125,6 +148,90 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.roundClock = Math.max(0, this.roundClock - ctx.dt);
     this.state.timeLeft = Math.ceil(this.roundClock);
     if (this.roundClock === 0) { this.endRound(); }
+  }
+
+  /** Top a public room up to BOT_FILL players with labelled bots, and send one home for every human who joins. */
+  private manageBots(dt: number) {
+    const humans = this.state.players.size - this.bots.size;
+    const want = this.isPrivate || humans < 1 ? 0 : Math.max(0, BOT_FILL - humans);
+    if (this.bots.size > want) {
+      const id = [...this.bots.keys()].pop()!;
+      this.bots.delete(id);
+      this.removePlayer(id);
+      this.botWait = 0;
+    } else if (this.bots.size < want) {
+      this.botWait += dt;
+      if (this.botWait >= (this.bots.size === 0 ? BOT_FIRST_DELAY : BOT_NEXT_DELAY)) { this.addBot(); this.botWait = 0; }
+    } else {
+      this.botWait = 0;
+    }
+  }
+
+  private addBot() {
+    const n = this.botCount++;
+    const id = `bot-${n}`;
+    const slot = this.joinCount++;
+    this.state.players.set(id, new Player({
+      ...this.spawnPoint(slot * 2.399963),
+      vx: 0, vy: 0, z: 0, vz: 0, score: 0,
+      name: `BOT ${BOT_NAMES[n % BOT_NAMES.length]}`,
+      hue: (slot * 137.5 + 200) % 360,
+      pet: slot % PETS.length,
+    }));
+    this.bots.set(id, { dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0 });
+    if (!this.state.it) { this.state.it = id; }
+  }
+
+  /**
+   * Bots use the same `stepEntity` as everyone. They re-aim only every 0.25-0.45s
+   * and idle now and then, so a human can outmaneuver them; "it" chases the
+   * nearest player, everyone else runs away from "it" and away from the walls.
+   */
+  private stepBots(dt: number) {
+    const arena = this.arena;
+    for (const [id, brain] of this.bots) {
+      const bot = this.state.players.get(id);
+      if (!bot) { continue; }
+
+      brain.retarget -= dt;
+      if (brain.retarget <= 0) {
+        brain.retarget = 0.25 + Math.random() * 0.2;
+        let vx = 0, vy = 0;
+        if (id === this.state.it) {
+          let best = Infinity;
+          for (const [otherId, other] of this.state.players) {
+            const d = Math.hypot(other.x - bot.x, other.y - bot.y);
+            if (otherId !== id && d < best) { best = d; vx = other.x - bot.x; vy = other.y - bot.y; }
+          }
+        } else {
+          const it = this.state.players.get(this.state.it);
+          if (it && Math.hypot(bot.x - it.x, bot.y - it.y) < 450) {
+            vx = bot.x - it.x; vy = bot.y - it.y;
+            const edge = 160; // steer back toward the middle when near a wall
+            if (bot.x < edge || bot.x > arena.width - edge) { vx += (arena.width / 2 - bot.x) * 2; }
+            if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
+          }
+        }
+        const idle = Math.random() < 0.12;
+        brain.dirX = idle || Math.abs(vx) < 20 ? 0 : Math.sign(vx);
+        brain.dirY = idle || Math.abs(vy) < 20 ? 0 : Math.sign(vy);
+      }
+
+      // Pinned against a block: hop and turn a random way for half a second.
+      brain.stuckClock += dt;
+      if (brain.stuckClock >= 0.5) {
+        const moved = Math.hypot(bot.x - brain.lastX, bot.y - brain.lastY);
+        if (moved < 15 && (brain.dirX || brain.dirY)) {
+          brain.unstick = 0.5;
+          brain.altX = Math.floor(Math.random() * 3) - 1;
+          brain.altY = Math.floor(Math.random() * 3) - 1;
+        }
+        brain.lastX = bot.x; brain.lastY = bot.y; brain.stuckClock = 0;
+      }
+      const hopping = brain.unstick > 0;
+      brain.unstick = Math.max(0, brain.unstick - dt);
+      stepEntity(bot, hopping ? { moveX: brain.altX, moveY: brain.altY, jump: 1 } : { moveX: brain.dirX, moveY: brain.dirY, jump: 0 }, dt, arena);
+    }
   }
 
   private endRound() {
