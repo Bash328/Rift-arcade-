@@ -1,10 +1,12 @@
 import { Room, Client, CloseCode, type StepContext } from "colyseus";
 import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
-import { freeRoomCode } from "./roomCode.js";
+import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { stepEntity } from "../shared/movement.js";
 import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, TAG_COOLDOWN, ROUND_SECONDS, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
+  /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
+  maxMessagesPerSecond = 120;
   maxClients = 8;
   state = new MyRoomState();
 
@@ -29,6 +31,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   };
 
   async onCreate(options: any) {
+    assertRoomCapacity();
     // The room id doubles as the invite code. Private rooms skip quick-play matchmaking.
     this.roomId = await freeRoomCode();
     if (options?.private) { await this.setPrivate(true); }

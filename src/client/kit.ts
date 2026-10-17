@@ -60,10 +60,13 @@ export function createStage(arenaEl: HTMLElement) {
   composer.addPass(new UnrealBloomPass(new THREE.Vector2(960, 720), 0.9, 0.5, 0.7));
   composer.addPass(new OutputPass());
 
+  /** Render scale: drops on a device that can't keep up, and recovers when it can. */
+  let scale = 1;
+
   function resize() {
     const w = Math.max(arenaEl.clientWidth, 1);
     const h = Math.max(arenaEl.clientHeight, 1);
-    const ratio = Math.min(devicePixelRatio, LITE ? 1.25 : 1.5);
+    const ratio = Math.min(devicePixelRatio, LITE ? 1.25 : 1.5) * scale;
     renderer.setPixelRatio(ratio);
     composer.setPixelRatio(ratio);
     renderer.setSize(w, h, false);
@@ -75,7 +78,19 @@ export function createStage(arenaEl: HTMLElement) {
   new ResizeObserver(resize).observe(arenaEl);
   resize();
 
-  return { renderer, scene, camera, composer };
+  // Adaptive resolution: ~2 seconds of consecutive slow frames lowers the render
+  // scale; ~10 seconds of fast ones raises it again. A single hitch changes nothing.
+  let slow = 0;
+  let fast = 0;
+  function adaptQuality(frameMs: number) {
+    if (frameMs > 40) { slow++; fast = 0; }
+    else if (frameMs < 20) { fast++; slow = 0; }
+    else { slow = 0; fast = 0; }
+    if (slow >= 60 && scale > 0.5) { scale = Math.max(0.5, scale * 0.85); slow = 0; resize(); }
+    else if (fast >= 600 && scale < 1) { scale = Math.min(1, scale * 1.1); fast = 0; resize(); }
+  }
+
+  return { renderer, scene, camera, composer, adaptQuality, renderScale: () => scale };
 }
 
 /** A dark solid box with glowing edges. Sim (x, y) maps to world (x, z). */
@@ -499,7 +514,85 @@ export function createFullscreen() {
   addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() === "f" && (e.target as HTMLElement).tagName !== "INPUT") { toggle(); }
   });
+  // Typing a name opens the on-screen keyboard. Keep the page on the part of the
+  // screen that is still visible, instead of letting the browser pan it away.
+  const viewport = window.visualViewport;
+  if (viewport) {
+    const fit = () => {
+      root.style.setProperty("--vv-top", `${viewport.offsetTop}px`);
+      root.style.setProperty("--vv-height", `${viewport.height}px`);
+    };
+    viewport.addEventListener("resize", fit);
+    viewport.addEventListener("scroll", fit);
+    fit();
+  }
+  document.addEventListener("focusin", (e) => {
+    const field = e.target as HTMLElement;
+    if (field.tagName === "INPUT") { setTimeout(() => field.scrollIntoView({ block: "center", behavior: "smooth" }), 250); }
+  });
+
   document.addEventListener("fullscreenchange", sync);
   phoneMq.addEventListener("change", sync);
   sync();
+}
+
+/**
+ * Add ?debug to a game's address for a small readout of frame time (median and
+ * 95th percentile), draw calls, triangles, GPU objects and the render scale -
+ * the numbers to compare across devices and releases. Does nothing otherwise.
+ */
+export function createDebugHud(arenaEl: HTMLElement, renderer: THREE.WebGLRenderer, renderScale: () => number) {
+  if (!new URLSearchParams(location.search).has("debug")) { return { frame(_ms: number) { /* off */ } }; }
+
+  const el = document.createElement("pre");
+  el.className = "debughud";
+  arenaEl.appendChild(el);
+  renderer.info.autoReset = false; // one composer.render() is several passes; count them all
+  const times: number[] = [];
+  let n = 0;
+
+  return {
+    frame(ms: number) {
+      times.push(ms);
+      if (times.length > 120) { times.shift(); }
+      // `info` holds the previous frame's passes: read it, then clear it for the next frame.
+      const { render, memory } = renderer.info;
+      const calls = render.calls;
+      const triangles = render.triangles;
+      renderer.info.reset();
+      n++;
+      if (n % 30 !== 0 && n !== 3) { return; } // first reading after 3 frames, then every 30
+      const sorted = [...times].sort((a, b) => a - b);
+      const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))].toFixed(1);
+      el.textContent =
+        `frame ${at(0.5)} ms (p95 ${at(0.95)})  ${(1000 / Number(at(0.5))).toFixed(0)} fps\n` +
+        `calls ${calls}  tris ${triangles}\n` +
+        `geometries ${memory.geometries}  textures ${memory.textures}\n` +
+        `render scale ${renderScale().toFixed(2)}`;
+    },
+  };
+}
+
+/** The game script is running: take down the "Loading" cover the page started with. */
+export function gameReady() {
+  (window as unknown as { __riftReady?: () => void }).__riftReady?.();
+}
+
+/** Something broke: say so, with a way to retry, instead of leaving a blank screen. */
+export function showFatal(message: string) {
+  let boot = document.getElementById("boot");
+  if (!boot) {
+    boot = document.createElement("div");
+    boot.id = "boot";
+    boot.className = "boot";
+    document.getElementById("arena")?.appendChild(boot);
+  }
+  const text = document.createElement("p");
+  text.textContent = message;
+  const reload = document.createElement("button");
+  reload.type = "button";
+  reload.className = "lbtn lbtn--pink";
+  reload.textContent = "Reload";
+  reload.onclick = () => location.reload();
+  boot.replaceChildren(text, reload);
 }

@@ -7,7 +7,7 @@ const os = require("os");
 
 module.exports = {
   apps: [{
-    name: "colyseus-app",
+    name: "game-server",
     script: "dist/server/server.mjs",
     time: true,
     watch: false,

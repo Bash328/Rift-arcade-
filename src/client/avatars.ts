@@ -42,6 +42,7 @@ export class Avatar {
   private yaw = 0;
   private readonly lastFeet = new THREE.Vector3();
   private placeholder?: THREE.Mesh;
+  private readonly ring: THREE.Mesh;
   private gone = false;
 
   constructor(private readonly scene: THREE.Scene, pet: number, hue: number) {
@@ -54,6 +55,7 @@ export class Avatar {
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.8;
+    this.ring = ring;
 
     this.placeholder = new THREE.Mesh(
       new THREE.BoxGeometry(PLAYER_HALF * 2, PLAYER_HALF * 2, PLAYER_HALF * 2),
@@ -129,9 +131,17 @@ export class Avatar {
     (this.placeholder?.material as THREE.MeshStandardMaterial | undefined)?.emissive.set(glow);
   }
 
+  /** Remove from the scene and free what this avatar owns. The loaded model's geometry and texture are shared, so they stay. */
   dispose() {
     this.gone = true;
     this.mixer?.stopAllAction();
     this.scene.remove(this.group);
+    for (const material of this.materials) { material.dispose(); } // per-avatar clones
+    this.ring.geometry.dispose();
+    (this.ring.material as THREE.Material).dispose();
+    if (this.placeholder) {
+      this.placeholder.geometry.dispose();
+      (this.placeholder.material as THREE.Material).dispose();
+    }
   }
 }

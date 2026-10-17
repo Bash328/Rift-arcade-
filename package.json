@@ -14,7 +14,8 @@
     "clean": "rimraf dist",
     "test": "mocha -r tsx test/**.test.ts --exit --timeout 15000",
     "dev": "vite",
-    "build:client": "vite build --mode client"
+    "build:client": "vite build --mode client",
+    "loadtest:arcade": "tsx loadtest/arcade.ts"
   },
   "author": "",
   "license": "UNLICENSED",

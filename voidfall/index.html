@@ -57,6 +57,11 @@
 
         <div class="cab__bezel">
           <div class="cab__screen" id="arena">
+            <div id="boot" class="boot" role="status">
+              <span class="boot__spin" aria-hidden="true"></span>
+              <p id="bootMsg">Loading game...</p>
+              <button id="bootReload" class="lbtn lbtn--pink" type="button" hidden>Reload</button>
+            </div>
             <form id="lobby" class="lobby">
               <p class="lobby__title">READY PLAYER?</p>
               <label class="lobby__field">Your name
@@ -97,6 +102,21 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18.5h2" /></svg>
       <p>Rotate your phone to play</p>
     </div>
+    <script>
+      // If the game script never starts (slow network, an old cached copy), say so and offer a reload.
+      (function () {
+        function say(text) {
+          var m = document.getElementById("bootMsg"); if (m) { m.textContent = text; }
+          var b = document.getElementById("bootReload"); if (b) { b.hidden = false; }
+        }
+        var timer = setTimeout(function () { say("Still loading. On a slow connection this can take a while."); }, 12000);
+        window.__riftReady = function () { clearTimeout(timer); var boot = document.getElementById("boot"); if (boot) { boot.remove(); } };
+        function failed(message) { if (document.getElementById("boot")) { say("The game could not start (" + message + "). Reload to try again."); } }
+        addEventListener("error", function (e) { failed(e.message || "script error"); });
+        addEventListener("unhandledrejection", function (e) { failed(String((e.reason && e.reason.message) || e.reason || "error")); });
+        document.addEventListener("click", function (e) { if (e.target && e.target.id === "bootReload") { location.reload(); } });
+      })();
+    </script>
     <script type="module" src="/src/client/voidfall.ts"></script>
   </body>
 </html>

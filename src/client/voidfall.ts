@@ -8,7 +8,7 @@ import { PLAYER_HALF, GRAVITY } from "../shared/constants.js";
 import { stepVoidEntity, GRID, TILE, VOID_SIZE, SOLID, CRACKING, GONE } from "../shared/void.js";
 import {
   NEON_CYAN, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, loadFx, SHADOW_MAP, type Sfx,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, gameReady, showFatal, loadFx, SHADOW_MAP, type Sfx,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
 
@@ -21,7 +21,8 @@ const client = new ColyseusSDK<typeof server>(
   `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`
 );
 
-const { scene, camera, composer } = createStage(arenaEl);
+const { scene, camera, composer, renderer, adaptQuality, renderScale } = createStage(arenaEl);
+const debug = createDebugHud(arenaEl, renderer, renderScale);
 
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(VOID_SIZE / 2 + 300, 800, VOID_SIZE / 2 + 300);
@@ -46,6 +47,7 @@ const tileMeshes = Array.from({ length: GRID * GRID }, (_, i) => {
   );
   crackFx.rotation.set(-Math.PI / 2, 0, (i * 1.7) % (Math.PI * 2));
   crackFx.position.y = TILE_H / 2 + 0.8;
+  crackFx.visible = false;
   mesh.add(crackFx);
   mesh.userData = { state: SOLID, fallV: 0, crackFx };
   return mesh;
@@ -57,6 +59,7 @@ const particles = createParticles(scene);
 const controls = createControls();
 const audio = createAudio();
 createFullscreen();
+gameReady();
 const onVz = jumpSounds(audio);
 const moveCamera = createCameraRig(
   camera,
@@ -82,7 +85,11 @@ async function main() {
   const input = room.input<MoveInput>({ mode: "reliable" });
 
   // The first patch is what creates our own player.
-  await new Promise<void>((resolve) => room.onStateChange.once(() => resolve()));
+  statusEl.textContent = "Joining...";
+  await Promise.race([
+    new Promise<void>((resolve) => room.onStateChange.once(() => resolve())),
+    new Promise<void>((_, reject) => setTimeout(() => reject(new Error("The server did not send the game")), 15000)),
+  ]);
   const self = room.state.players.get(room.sessionId);
 
   predict.reconciler(self, {
@@ -139,8 +146,11 @@ async function main() {
   };
 
   function frame(now: number) {
-    const dt = Math.min((now - last) / 1000, 0.1);
+    const frameMs = now - last;
+    const dt = Math.min(frameMs / 1000, 0.1);
     last = now;
+    adaptQuality(frameMs);
+    debug.frame(frameMs);
     const steps = predict.tick(now);
     for (let i = 0; i < steps; i++) {
       Object.assign(input.data, controls.read());
@@ -168,7 +178,8 @@ async function main() {
         }
       }
       const crackFx = tile.userData.crackFx as THREE.Mesh;
-      (crackFx.material as THREE.MeshBasicMaterial).opacity = state === CRACKING ? 0.55 + 0.45 * Math.sin(now / 45 + i) : 0;
+      crackFx.visible = state === CRACKING; // not drawn at all unless cracking: saves a draw call per tile, twice a frame
+      (crackFx.material as THREE.MeshBasicMaterial).opacity = 0.55 + 0.45 * Math.sin(now / 45 + i);
       if (state === CRACKING) {
         tile.position.y = -TILE_H / 2 + Math.sin(now / 25 + i) * 1.6;
         const flash = Math.sin(now / 60) > 0;
@@ -230,4 +241,5 @@ async function main() {
 main().catch((e) => {
   console.error(e);
   statusEl.textContent = "Could not connect";
+  showFatal("Could not start the game. Check your connection and reload.");
 });

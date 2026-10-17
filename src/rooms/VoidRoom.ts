@@ -1,7 +1,7 @@
 import { Room, Client, type StepContext } from "colyseus";
 import { VoidState, VoidPlayer } from "./schema/VoidState.js";
 import { MoveInput } from "./schema/MyRoomState.js";
-import { freeRoomCode } from "./roomCode.js";
+import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { TICK_RATE, PETS } from "../shared/constants.js";
 import {
   GRID, VOID_SIZE, SOLID, CRACKING, GONE, CRACK_TIME, FALL_LIMIT, tileAt, stepVoidEntity,
@@ -17,6 +17,8 @@ const IDLE = { moveX: 0, moveY: 0, jump: 0 };
  * lands on it and drops away 1.2s later. Last player standing wins.
  */
 export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
+  /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
+  maxMessagesPerSecond = 120;
   maxClients = 12;
   state = new VoidState();
 
@@ -34,6 +36,7 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private quiet = new Map<string, number>();
 
   async onCreate(options: any) {
+    assertRoomCapacity();
     // The room id doubles as the invite code. Private rooms skip quick-play matchmaking.
     this.roomId = await freeRoomCode();
     if (options?.private) { await this.setPrivate(true); }

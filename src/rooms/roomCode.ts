@@ -1,5 +1,14 @@
 import { matchMaker } from "colyseus";
 
+const MAX_ROOMS = 200;
+
+/** Stops a flood of "create room" requests from exhausting a small server. */
+export function assertRoomCapacity() {
+  if (matchMaker.stats.local.roomCount >= MAX_ROOMS) {
+    throw new Error("The server is full right now. Try again in a minute.");
+  }
+}
+
 /** No I or O: they read as 1 and 0 when a code is shouted across a room. */
 const LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 

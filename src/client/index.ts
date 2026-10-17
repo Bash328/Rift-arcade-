@@ -8,7 +8,7 @@ import { stepEntity } from "../shared/movement.js";
 import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, OBSTACLES } from "../shared/constants.js";
 import {
   NEON_CYAN, NEON_PINK, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, SHADOW_MAP,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, gameReady, showFatal, SHADOW_MAP,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
 
@@ -21,7 +21,8 @@ const client = new ColyseusSDK<typeof server>(
   `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`
 );
 
-const { scene, camera, composer } = createStage(arenaEl);
+const { scene, camera, composer, renderer, adaptQuality, renderScale } = createStage(arenaEl);
+const debug = createDebugHud(arenaEl, renderer, renderScale);
 
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(ARENA_WIDTH / 2 + 350, 900, ARENA_HEIGHT / 2 + 350);
@@ -68,6 +69,7 @@ const particles = createParticles(scene);
 const controls = createControls();
 const audio = createAudio();
 createFullscreen();
+gameReady();
 const onVz = jumpSounds(audio);
 const moveCamera = createCameraRig(
   camera,
@@ -98,7 +100,11 @@ async function main() {
   const input = room.input<MoveInput>({ mode: "reliable" });
 
   // The first patch is what creates our own Player.
-  await new Promise<void>((resolve) => room.onStateChange.once(() => resolve()));
+  statusEl.textContent = "Joining...";
+  await Promise.race([
+    new Promise<void>((resolve) => room.onStateChange.once(() => resolve())),
+    new Promise<void>((_, reject) => setTimeout(() => reject(new Error("The server did not send the game")), 15000)),
+  ]);
   const self = room.state.players.get(room.sessionId);
 
   predict.reconciler(self, {
@@ -148,8 +154,11 @@ async function main() {
   const chest = new THREE.Vector3();
 
   function frame(now: number) {
-    const dt = Math.min((now - last) / 1000, 0.1);
+    const frameMs = now - last;
+    const dt = Math.min(frameMs / 1000, 0.1);
     last = now;
+    adaptQuality(frameMs);
+    debug.frame(frameMs);
     // Drives prediction, interpolation and the reconciler, and returns how many
     // fixed steps came due - so input rate follows the simulation rate, not the
     // monitor's refresh rate.
@@ -218,4 +227,5 @@ async function main() {
 main().catch((e) => {
   console.error(e);
   statusEl.textContent = "Could not connect";
+  showFatal("Could not start the game. Check your connection and reload.");
 });
