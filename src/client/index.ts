@@ -44,10 +44,10 @@ let earthTexture: THREE.Texture | undefined;
 
 /** Black sky: a scatter of stars and the Earth hanging behind the arena. */
 function addMoonSky(parent: THREE.Object3D, W: number, H: number) {
-  const pts = new Float32Array(3 * (LITE ? 300 : 700));
+  const pts = new Float32Array(3 * (LITE ? 500 : 1100));
   // A backdrop behind the far wall, where the camera's sky strip actually looks.
   for (let i = 0; i < pts.length; i += 3) {
-    pts[i] = -800 + Math.random() * (W + 1600); pts[i + 1] = 80 + Math.random() * 900; pts[i + 2] = -1400 + Math.random() * 1100;
+    pts[i] = -2500 + Math.random() * (W + 5000); pts[i + 1] = 80 + Math.random() * 900; pts[i + 2] = -1400 + Math.random() * 2800;
   }
   starSprite ??= loadFx("star_04");
   const stars = new THREE.Points(
@@ -67,8 +67,8 @@ function addMoonSky(parent: THREE.Object3D, W: number, H: number) {
     earthTexture = new THREE.CanvasTexture(c);
     earthTexture.colorSpace = THREE.SRGBColorSpace;
   }
-  const earth = new THREE.Mesh(new THREE.SphereGeometry(150, 32, 20), new THREE.MeshBasicMaterial({ map: earthTexture, fog: false }));
-  earth.position.set(W * 0.78, 380, -600);
+  const earth = new THREE.Mesh(new THREE.SphereGeometry(110, 32, 20), new THREE.MeshBasicMaterial({ map: earthTexture, fog: false }));
+  earth.position.set(-60, 160, -120); // just behind the far-left corner, rising over the wall
   parent.add(earth);
 }
 
