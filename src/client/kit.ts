@@ -338,6 +338,13 @@ export function showRoomTag(room: { roomId: string }, gameName: string) {
  * there the camera chases the player (clamped so it doesn't wander off the arena).
  * Call the returned function every frame with the player's world position.
  */
+/** Phone camera: height above and distance behind the player. */
+const PHONE_HEIGHT = 470;
+const PHONE_BEHIND = 470;
+/** PC camera: how much closer than the whole-arena view (1 = same), and how far it drifts toward you (0 = not at all). */
+const DESKTOP_ZOOM = 0.78;
+const DESKTOP_FOLLOW = 0.45;
+
 export function createCameraRig(
   camera: THREE.PerspectiveCamera,
   overviewPos: THREE.Vector3,
@@ -353,13 +360,27 @@ export function createCameraRig(
   const lookGoal = new THREE.Vector3();
   const look = overviewLook.clone();
 
+  const offset = new THREE.Vector3();
   const update = (target?: THREE.Vector3) => {
-    if (followMq.matches && target) {
+    if (target) {
       const fx = Math.min(Math.max(target.x, view.bounds.minX), view.bounds.maxX);
       const fz = Math.min(Math.max(target.z, view.bounds.minZ), view.bounds.maxZ);
-      camGoal.set(fx, 300, fz + 300);
-      lookGoal.set(fx, 0, fz);
+      if (followMq.matches) {
+        // Phone: a close chase camera, a good way back so you can see who is near.
+        camGoal.set(fx, PHONE_HEIGHT, fz + PHONE_BEHIND);
+        lookGoal.set(fx, 0, fz);
+      } else {
+        // PC: closer than the whole-arena view, drifting only part of the way toward
+        // you, so the screen stays calm but the pets are big enough to see.
+        lookGoal.set(
+          view.look.x + (fx - view.look.x) * DESKTOP_FOLLOW, 0,
+          view.look.z + (fz - view.look.z) * DESKTOP_FOLLOW,
+        );
+        offset.copy(view.pos).sub(view.look).multiplyScalar(DESKTOP_ZOOM);
+        camGoal.copy(lookGoal).add(offset);
+      }
     } else {
+      // No player to follow (lobby, spectating): the whole arena.
       camGoal.copy(view.pos);
       lookGoal.copy(view.look);
     }

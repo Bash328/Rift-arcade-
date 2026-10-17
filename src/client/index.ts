@@ -114,14 +114,15 @@ const arenaBlurb = document.getElementById("arenaBlurb")!;
 for (const a of ARENAS) { arenaSelect.append(new Option(a.name, a.id)); }
 try { arenaSelect.value = localStorage.getItem("arena") ?? ""; } catch { /* private mode */ }
 const showBlurb = () => {
-  arenaBlurb.textContent = arenaSelect.value ? ARENAS.find((a) => a.id === arenaSelect.value)?.blurb ?? "" : "No preference: it changes every round.";
+  arenaBlurb.textContent = arenaSelect.value ? ARENAS.find((a) => a.id === arenaSelect.value)?.blurb ?? "" : "It changes every round.";
+  buildArena(arenaOf(arenaSelect.value || "classic")); // preview it behind the lobby
   try { localStorage.setItem("arena", arenaSelect.value); } catch { /* private mode */ }
 };
 arenaSelect.addEventListener("change", showBlurb);
 showBlurb();
 
-// Quick play is one shared pool, so nobody waits alone: the arena picked here is only your first vote.
-const quickPlay = (name: string) => client.joinOrCreate("my_room", { name, vote: arenaSelect.value });
+// Quick play is one shared pool, so nobody waits alone: those rooms change arena every round.
+const quickPlay = (name: string) => client.joinOrCreate("my_room", { name });
 type GameRoom = Awaited<ReturnType<typeof quickPlay>>;
 
 async function main() {
@@ -174,37 +175,6 @@ async function main() {
     avatars.forEach((avatar) => avatar.dispose());
     avatars.clear();
   });
-
-  // After each round everyone votes for the next arena (private rooms with a locked arena skip this).
-  const voteEl = document.getElementById("vote")!;
-  let voteKey = "";
-  function refreshVote() {
-    const open = !!room.state.winner && !room.state.locked;
-    voteEl.hidden = !open;
-    if (!open) { voteKey = ""; return; }
-    const counts = new Map<string, number>();
-    let mine = "";
-    for (const [id, p] of room.state.players) {
-      if (p.vote) { counts.set(p.vote, (counts.get(p.vote) ?? 0) + 1); }
-      if (id === room.sessionId) { mine = p.vote; }
-    }
-    const key = JSON.stringify([[...counts], mine, room.state.nextArena]);
-    if (key === voteKey) { return; }
-    voteKey = key;
-    const title = document.createElement("p");
-    title.textContent = "Vote for the next arena";
-    const row = document.createElement("div");
-    row.className = "vote__row";
-    for (const a of ARENAS) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `lbtn${a.id === mine ? " on" : ""}${a.id === room.state.nextArena ? " lead" : ""}`;
-      button.textContent = `${a.name}${counts.get(a.id) ? `  ${counts.get(a.id)}` : ""}`;
-      button.onclick = () => room.send("vote", a.id);
-      row.append(button);
-    }
-    voteEl.replaceChildren(title, row);
-  }
 
   let boardKey = "";
   function refreshBoard() {
@@ -287,10 +257,9 @@ async function main() {
     moveCamera(avatars.get(room.sessionId)?.group.position);
 
     refreshBoard();
-    refreshVote();
     const { timeLeft, winner, it } = room.state;
     statusEl.textContent = winner
-      ? `Round over! Winner: ${winner}. Next: ${arenaOf(room.state.nextArena).name}`
+      ? `Round over! Winner: ${winner}.${room.state.locked ? "" : ` Next: ${arenaOf(room.state.nextArena).name}`}`
       : room.state.players.size < 2
         ? "Waiting for another player..."
         : `${arenaOf(room.state.arena).name} - ${timeLeft}s${it === room.sessionId ? " - YOU'RE IT!" : ""}`;

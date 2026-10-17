@@ -29,15 +29,8 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   private overLeft = 0;
 
   messages = {
-    // movement arrives through the input buffer above; this is for everything else.
-
-    /** A vote for the arena after this round. Ignored in a room whose host locked one. */
-    vote: (client: Client, arenaId: unknown) => {
-      const player = this.state.players.get(client.sessionId);
-      if (!player || this.lockedArena || !this.isArena(arenaId)) { return; }
-      player.vote = arenaId;
-      if (this.overLeft > 0) { this.updateNextArena(); }
-    },
+    // movement arrives through the input buffer above — register handlers here
+    // only for things that are not inputs (chat, emotes, …).
   };
 
   async onCreate(options: any) {
@@ -45,11 +38,11 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     // The room id doubles as the invite code. Private rooms skip quick-play matchmaking.
     this.roomId = await freeRoomCode();
     if (options?.private) { await this.setPrivate(true); }
-    // A private room's host can lock one arena; otherwise every round gets a different one.
+    // The host (whoever creates the room) picks the arena, and it is the arena from the very
+    // start, so the waiting area is the real thing. With no pick, every round gets a different one.
     this.lockedArena = ARENAS.some((a) => a.id === options?.arena) ? options.arena : undefined;
     this.state.locked = !!this.lockedArena;
-    // The first arena is the creator's pick if they made one, otherwise random.
-    this.state.arena = this.lockedArena ?? (this.isArena(options?.vote) ? options.vote : this.pickArena(""));
+    this.state.arena = this.lockedArena ?? this.pickArena("");
     this.state.nextArena = this.state.arena;
     this.roundClock = this.arena.roundSeconds;
     this.state.timeLeft = this.roundClock;
@@ -72,8 +65,6 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       name: String(options?.name ?? "").trim().slice(0, 12) || "Player",
       hue: (n * 137.5 + 200) % 360,
       pet: n % PETS.length,
-      // The arena picked in the lobby is this player's first vote.
-      vote: this.lockedArena || !this.isArena(options?.vote) ? "" : options.vote,
     }));
     if (!this.state.it) { this.state.it = client.sessionId; }
   }
@@ -84,7 +75,6 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     if (this.state.it === client.sessionId) {
       this.state.it = this.state.players.keys().next().value ?? "";
     }
-    if (this.overLeft > 0) { this.updateNextArena(); }
   }
 
   onDispose() {
@@ -139,15 +129,13 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     }
     this.state.winner = best?.name ?? "";
     this.overLeft = ROUND_END_PAUSE;
-    // Count the votes cast so far (the lobby picks); players can change them until the pause ends.
-    this.state.nextArena = "";
-    this.updateNextArena();
+    // A room the host locked stays put; any other moves on to a different arena.
+    this.state.nextArena = this.lockedArena ?? this.pickArena(this.state.arena);
   }
 
   private newRound() {
     for (const player of this.state.players.values()) { player.score = 0; }
     this.state.arena = this.state.nextArena;
-    for (const player of this.state.players.values()) { player.vote = ""; }
     this.roundClock = this.arena.roundSeconds;
     this.state.timeLeft = this.roundClock;
     this.state.winner = "";
@@ -156,30 +144,6 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   }
 
   private get arena(): Arena { return arenaOf(this.state.arena); }
-
-  private isArena(id: unknown): id is string {
-    return typeof id === "string" && ARENAS.some((a) => a.id === id);
-  }
-
-  /**
-   * The arena with the most votes is next. With no votes, or a tie, it is picked at
-   * random (from the arenas other than this round's when nobody voted). An answer
-   * that is still one of the leaders is kept, so the banner does not flicker.
-   */
-  private updateNextArena() {
-    if (this.lockedArena) { this.state.nextArena = this.lockedArena; return; }
-    const counts = new Map<string, number>();
-    for (const p of this.state.players.values()) {
-      if (p.vote) { counts.set(p.vote, (counts.get(p.vote) ?? 0) + 1); }
-    }
-    const top = Math.max(0, ...counts.values());
-    const leaders = top === 0
-      ? ARENAS.filter((a) => a.id !== this.state.arena).map((a) => a.id)
-      : [...counts].filter(([, n]) => n === top).map(([id]) => id);
-    if (!leaders.includes(this.state.nextArena)) {
-      this.state.nextArena = leaders[Math.floor(Math.random() * leaders.length)];
-    }
-  }
 
   /** A random arena other than `not`. */
   private pickArena(not: string): string {

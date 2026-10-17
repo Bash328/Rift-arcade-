@@ -17,5 +17,5 @@ export const PLAYER_SPEED = 300;
 /** Seconds a freshly tagged player can't be tagged back. */
 export const TAG_COOLDOWN = 1;
 
-/** How long the winner banner and the arena vote show before the next round. */
-export const ROUND_END_PAUSE = 12;
+/** How long the winner banner shows before the next round. */
+export const ROUND_END_PAUSE = 6;
