@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => ({
   environments: {
     // Multi-page client: the arcade hub at / and one folder per game. Scoped to
     // the client, because the server environment has its own entry (serverEntry).
-    client: { build: { rollupOptions: { input: { hub: "index.html", cubeTag: "cube-tag/index.html" } } } },
+    client: { build: { rollupOptions: { input: { hub: "index.html", cubeTag: "cube-tag/index.html", voidfall: "voidfall/index.html" } } } },
   },
   server: { allowedHosts: ["rift-arcade.online", "www.rift-arcade.online"]},
   plugins: [

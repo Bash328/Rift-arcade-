@@ -4,6 +4,8 @@ import { ColyseusTestServer, boot } from "@colyseus/testing";
 import appConfig from "../src/app.config.js";
 import { MyRoomState, type MoveInput } from "../src/rooms/schema/MyRoomState.js";
 import { stepEntity } from "../src/shared/movement.js";
+import { stepVoidEntity, tileAt, GRID, GONE, SOLID } from "../src/shared/void.js";
+import type { VoidState } from "../src/rooms/schema/VoidState.js";
 import { ARENA_WIDTH, ARENA_HEIGHT, OBSTACLES, PLAYER_SPEED, TICK_RATE } from "../src/shared/constants.js";
 
 describe("testing your Colyseus app", () => {
@@ -153,5 +155,58 @@ describe("testing your Colyseus app", () => {
     const friend = await colyseus.sdk.joinById(priv.roomId, { name: "Friend" });
     assert.strictEqual(friend.roomId, priv.roomId);
     assert.strictEqual(priv.state.players.size, 1);
+  });
+
+  it("Voidfall physics: stand on a tile, fall when it is gone, land from a jump", () => {
+    const dt = 1 / TICK_RATE;
+    const idle = { moveX: 0, moveY: 0, jump: 0 };
+    const tiles = new Array(GRID * GRID).fill(SOLID);
+    const e = { x: 450, y: 450, vx: 0, vy: 0, z: 0, vz: 0 };
+
+    for (let i = 0; i < 10; i++) { stepVoidEntity(e, idle, dt, tiles); }
+    assert.strictEqual(e.z, 0, "stays put on a solid tile");
+
+    stepVoidEntity(e, { ...idle, jump: 1 }, dt, tiles);
+    assert.ok(e.z > 0, "jumps");
+    for (let i = 0; i < 40; i++) { stepVoidEntity(e, idle, dt, tiles); }
+    assert.strictEqual(e.z, 0, "lands again");
+
+    tiles[tileAt(e.x, e.y)] = GONE;
+    for (let i = 0; i < 40; i++) { stepVoidEntity(e, idle, dt, tiles); }
+    assert.ok(e.z < -300, "falls once the tile is gone");
+
+    // Off the edge of the grid there is nothing to stand on either.
+    const edge = { x: 899, y: 450, vx: 0, vy: 0, z: 0, vz: 0 };
+    for (let i = 0; i < 10; i++) { stepVoidEntity(edge, { ...idle, moveX: 1 }, dt, tiles); }
+    assert.ok(edge.z < 0, "walks off the edge and drops");
+  });
+
+  it("Voidfall round: countdown, tiles crack, the last player standing wins", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", {});
+    const ann = await colyseus.connectTo(room, { name: "Ann" });
+    await colyseus.connectTo(room, { name: "Bo" });
+    const settle = async (done: () => boolean, steps = 90) => {
+      for (let i = 0; i < steps && !done(); i++) { await room.waitForNextTimestep(); }
+    };
+
+    assert.match(room.roomId, /^[A-HJ-NP-Z]{4}$/);
+    await settle(() => room.state.phase === "countdown");
+    assert.strictEqual(room.state.phase, "countdown");
+
+    (room as any).phaseClock = 0.001;
+    await settle(() => room.state.phase === "playing");
+    assert.strictEqual(room.state.phase, "playing");
+
+    await settle(() => [...room.state.tiles].some((t) => t !== SOLID));
+    assert.ok([...room.state.tiles].some((t) => t !== SOLID), "a tile cracked under someone");
+
+    // Take the floor out from under Ann.
+    const a = room.state.players.get(ann.sessionId);
+    a.x = 50; a.y = 50;
+    room.state.tiles[0] = GONE;
+    await settle(() => room.state.phase === "over");
+    assert.strictEqual(a.alive, false);
+    assert.strictEqual(room.state.phase, "over");
+    assert.strictEqual(room.state.winner, "Bo");
   });
 });

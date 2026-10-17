@@ -12,6 +12,7 @@ import {
  * Import your Room files
  */
 import { MyRoom } from "./rooms/MyRoom.js";
+import { VoidRoom } from "./rooms/VoidRoom.js";
 
 const server = defineServer({
 
@@ -20,6 +21,7 @@ const server = defineServer({
    */
   rooms: {
     my_room: defineRoom(MyRoom).enableRealtimeListing(),
+    void_room: defineRoom(VoidRoom).enableRealtimeListing(),
     lobby: defineRoom(LobbyRoom),
   },
 
