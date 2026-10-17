@@ -13,6 +13,7 @@ module.exports = {
     watch: false,
     instances: os.cpus().length,
     exec_mode: "fork",
+    env: { NODE_ENV: "production" },
     wait_ready: true,
     max_memory_restart: "512M",
   }],

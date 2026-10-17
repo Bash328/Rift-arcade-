@@ -11,6 +11,10 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 export const NEON_CYAN = 0x00e5ff;
 export const NEON_PINK = 0xff2bd6;
 
+/** Phones and tablets: lighter graphics (less anti-aliasing, smaller shadows, lower resolution). */
+export const LITE = matchMedia("(pointer: coarse)").matches;
+export const SHADOW_MAP = LITE ? 1024 : 2048;
+
 const byId = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 /**
@@ -50,7 +54,7 @@ export function createStage(arenaEl: HTMLElement) {
   // Bloom is what makes the bright lines and emissive cubes glow.
   const composer = new EffectComposer(
     renderer,
-    new THREE.WebGLRenderTarget(960, 720, { type: THREE.HalfFloatType, samples: 4 }),
+    new THREE.WebGLRenderTarget(960, 720, { type: THREE.HalfFloatType, samples: LITE ? 2 : 4 }),
   );
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(new UnrealBloomPass(new THREE.Vector2(960, 720), 0.9, 0.5, 0.7));
@@ -59,7 +63,7 @@ export function createStage(arenaEl: HTMLElement) {
   function resize() {
     const w = Math.max(arenaEl.clientWidth, 1);
     const h = Math.max(arenaEl.clientHeight, 1);
-    const ratio = Math.min(devicePixelRatio, 1.5);
+    const ratio = Math.min(devicePixelRatio, LITE ? 1.25 : 1.5);
     renderer.setPixelRatio(ratio);
     composer.setPixelRatio(ratio);
     renderer.setSize(w, h, false);
@@ -471,6 +475,25 @@ export function createFullscreen() {
     else if (root.requestFullscreen) { root.requestFullscreen().catch(showTip); }
     else { showTip(); }
   };
+
+  // Turning a phone to landscape is the moment to go full screen, but browsers only
+  // allow it from a tap. So the first tap after rotating does it (the joystick
+  // or JUMP counts), unless the page is already installed or can't do it.
+  const landscape = matchMedia("(orientation: landscape)");
+  const coarse = matchMedia("(pointer: coarse)");
+  let armed = false;
+  const armFullscreenOnTap = () => {
+    if (armed || installed || !root.requestFullscreen || !coarse.matches || !landscape.matches || document.fullscreenElement) { return; }
+    armed = true;
+    addEventListener("pointerup", () => {
+      armed = false;
+      if (!document.fullscreenElement && landscape.matches) {
+        root.requestFullscreen().then(() => (screen.orientation as any)?.lock?.("landscape")).catch(() => { /* refused */ });
+      }
+    }, { once: true, capture: true });
+  };
+  landscape.addEventListener("change", armFullscreenOnTap);
+  armFullscreenOnTap();
 
   btn?.addEventListener("click", toggle);
   addEventListener("keydown", (e) => {

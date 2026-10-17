@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import express from "express";
 import {
   defineServer,
   defineRoom,
@@ -63,6 +67,29 @@ const server = defineServer({
      */
     if (process.env.NODE_ENV !== "production") {
       app.use("/playground", playground());
+    }
+
+    /**
+     * In production, serve the built website (`npm run build` -> dist/client) from
+     * this same server. In development Vite serves it instead, unbuilt - about 9 MB
+     * of separate files for a game page, which is why it must not run live.
+     */
+    if (process.env.NODE_ENV === "production") {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const clientDir = [resolve(here, "../client"), resolve(here, "../../client")]
+        .find((dir) => existsSync(resolve(dir, "index.html")));
+      if (clientDir) {
+        app.use(express.static(clientDir, {
+          setHeaders(res, file) {
+            const path = file.split("\\").join("/"); // Windows paths use backslashes
+            if (path.includes("/assets/")) { res.setHeader("Cache-Control", "public, max-age=31536000, immutable"); }
+            else if (["/models/", "/sfx/", "/fx/", "/icons/"].some((dir) => path.includes(dir))) { res.setHeader("Cache-Control", "public, max-age=86400"); }
+            else { res.setHeader("Cache-Control", "no-cache"); } // pages: always check for a new version
+          },
+        }));
+      } else {
+        console.warn("No built client found next to the server; run `npm run build`.");
+      }
     }
   }
 });

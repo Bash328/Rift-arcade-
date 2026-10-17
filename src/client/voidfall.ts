@@ -8,7 +8,7 @@ import { PLAYER_HALF, GRAVITY } from "../shared/constants.js";
 import { stepVoidEntity, GRID, TILE, VOID_SIZE, SOLID, CRACKING, GONE } from "../shared/void.js";
 import {
   NEON_CYAN, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, loadFx, type Sfx,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, loadFx, SHADOW_MAP, type Sfx,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
 
@@ -27,7 +27,7 @@ const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(VOID_SIZE / 2 + 300, 800, VOID_SIZE / 2 + 300);
 sun.target.position.set(VOID_SIZE / 2, 0, VOID_SIZE / 2);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
 Object.assign(sun.shadow.camera, { left: -700, right: 700, top: 700, bottom: -700, near: 1, far: 2200 });
 scene.add(sun, sun.target);
 

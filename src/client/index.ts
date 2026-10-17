@@ -8,7 +8,7 @@ import { stepEntity } from "../shared/movement.js";
 import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, OBSTACLES } from "../shared/constants.js";
 import {
   NEON_CYAN, NEON_PINK, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen,
+  runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, SHADOW_MAP,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
 
@@ -27,7 +27,7 @@ const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(ARENA_WIDTH / 2 + 350, 900, ARENA_HEIGHT / 2 + 350);
 sun.target.position.set(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
 Object.assign(sun.shadow.camera, { left: -900, right: 900, top: 750, bottom: -750, near: 1, far: 2500 });
 scene.add(sun, sun.target);
 
