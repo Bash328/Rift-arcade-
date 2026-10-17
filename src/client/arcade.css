@@ -515,7 +515,8 @@ button.btn {
   text-shadow: 0 0 8px var(--amber);
 }
 .lobby__field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--lavender); }
-.lobby input {
+.lobby input,
+.lobby select {
   min-height: 2.75rem;
   padding: 0 0.8rem;
   border: 2px solid #35e5ff80;
@@ -524,7 +525,8 @@ button.btn {
   color: var(--text);
   font: 700 1rem var(--ui);
 }
-.lobby input:focus-visible { outline: 3px solid var(--cyan); outline-offset: 2px; }
+.lobby input:focus-visible,
+.lobby select:focus-visible { outline: 3px solid var(--cyan); outline-offset: 2px; }
 .lobby input::placeholder { color: #6f62a0; }
 .lobby__join { display: flex; gap: 0.5rem; }
 .lobby__join input { flex: 1; min-width: 0; text-align: center; text-transform: uppercase; letter-spacing: 0.4em; }
@@ -783,3 +785,5 @@ button.btn {
 }
 @keyframes spin { to { rotate: 360deg; } }
 @media (prefers-reduced-motion: reduce) { .boot__spin { animation: none; } }
+
+.lobby select { appearance: auto; color-scheme: dark; }

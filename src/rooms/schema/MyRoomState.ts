@@ -39,6 +39,9 @@ export const MyRoomState = schema({
   players: t.map(Player),
   /** sessionId of the player who is "it" ("" when the room is empty). */
   it: t.string(),
+  /** Id of the arena being played, and the one the next round will use. */
+  arena: t.string(),
+  nextArena: t.string(),
   /** Whole seconds left in the round. */
   timeLeft: t.number(),
   /** Name of the last round's winner while the end banner shows, else "". */

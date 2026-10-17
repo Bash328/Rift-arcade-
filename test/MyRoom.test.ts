@@ -7,7 +7,10 @@ import { MyRoomState, type MoveInput } from "../src/rooms/schema/MyRoomState.js"
 import { stepEntity } from "../src/shared/movement.js";
 import { stepVoidEntity, tileAt, GRID, GONE, SOLID } from "../src/shared/void.js";
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
-import { ARENA_WIDTH, ARENA_HEIGHT, OBSTACLES, PLAYER_SPEED, TICK_RATE, PETS, SPAWN_RADIUS } from "../src/shared/constants.js";
+import { PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
+import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
+
+const classic = ARENA_BY_ID.classic;
 
 describe("testing your Colyseus app", () => {
   let colyseus: ColyseusTestServer<typeof appConfig>;
@@ -20,7 +23,7 @@ describe("testing your Colyseus app", () => {
   });
 
   it("advances a player from its buffered input", async () => {
-    const room = await colyseus.createRoom<MyRoomState>("my_room", {});
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { arena: "classic" });
     const client1 = await colyseus.connectTo(room);
 
     const player = room.state.players.get(client1.sessionId);
@@ -39,7 +42,7 @@ describe("testing your Colyseus app", () => {
   });
 
   it("clamps input that is out of range", async () => {
-    const room = await colyseus.createRoom<MyRoomState>("my_room", {});
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { arena: "classic" });
     const client1 = await colyseus.connectTo(room);
 
     const player = room.state.players.get(client1.sessionId);
@@ -59,7 +62,7 @@ describe("testing your Colyseus app", () => {
   });
 
   it("passes \"it\" on touch", async () => {
-    const room = await colyseus.createRoom<MyRoomState>("my_room", {});
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { arena: "classic" });
     const a = await colyseus.connectTo(room);
     const b = await colyseus.connectTo(room);
     assert.strictEqual(room.state.it, a.sessionId, "first player starts as it");
@@ -73,7 +76,7 @@ describe("testing your Colyseus app", () => {
   });
 
   it("ends the round with the top scorer as winner, then restarts", async () => {
-    const room = await colyseus.createRoom<MyRoomState>("my_room", {});
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { arena: "classic" });
     const a = await colyseus.connectTo(room, { name: "Ann" });
     const b = await colyseus.connectTo(room, { name: "Bo" });
     room.state.players.get(b.sessionId).score = 10;
@@ -97,26 +100,84 @@ describe("testing your Colyseus app", () => {
   it("stops at a pillar and slides along its face", () => {
     // Corner fortress at (290, 210), half-extent 45: its left face is x=245, so a player (half 12) stops at 233.
     const e = { x: 232, y: 210, vx: 0, vy: 0, z: 0, vz: 0 };
-    stepEntity(e, { moveX: 1, moveY: 1, jump: 0 }, 1 / TICK_RATE);
+    stepEntity(e, { moveX: 1, moveY: 1, jump: 0 }, 1 / TICK_RATE, classic);
     assert.strictEqual(e.x, 232, "blocked on x");
     assert.ok(e.y > 210, "still slides on y");
   });
 
-  it("keeps every gap passable and the spawn area clear", () => {
+  it("every arena is playable: no tight gaps, nothing in the spawn area", () => {
     const MIN_GAP = 40; // a cube is 24 wide
-    for (const [i, a] of OBSTACLES.entries()) {
-      for (const [dist, name] of [[a.x - a.hw, "left"], [ARENA_WIDTH - a.x - a.hw, "right"], [a.y - a.hh, "top"], [ARENA_HEIGHT - a.y - a.hh, "bottom"]] as const) {
-        assert.ok(dist >= MIN_GAP, `obstacle ${i} too close to ${name} edge`);
+    for (const arena of ARENAS) {
+      for (const [i, a] of arena.obstacles.entries()) {
+        for (const [dist, name] of [[a.x - a.hw, "left"], [arena.width - a.x - a.hw, "right"], [a.y - a.hh, "top"], [arena.height - a.y - a.hh, "bottom"]] as const) {
+          assert.ok(dist >= MIN_GAP, `${arena.id}: obstacle ${i} too close to ${name} edge`);
+        }
+        for (const b of arena.obstacles.slice(i + 1)) {
+          const gap = Math.max(Math.abs(a.x - b.x) - a.hw - b.hw, Math.abs(a.y - b.y) - a.hh - b.hh);
+          assert.ok(gap >= MIN_GAP, `${arena.id}: obstacles at (${a.x},${a.y}) and (${b.x},${b.y}) leave a ${gap} gap`);
+        }
+        // The spawn ring around the middle, plus half a cube.
+        const cx = Math.max(Math.abs(arena.width / 2 - a.x) - a.hw, 0);
+        const cy = Math.max(Math.abs(arena.height / 2 - a.y) - a.hh, 0);
+        assert.ok(Math.hypot(cx, cy) > arena.spawnRadius + 12, `${arena.id}: obstacle ${i} overlaps the spawn ring`);
       }
-      for (const b of OBSTACLES.slice(i + 1)) {
-        const gap = Math.max(Math.abs(a.x - b.x) - a.hw - b.hw, Math.abs(a.y - b.y) - a.hh - b.hh);
-        assert.ok(gap >= MIN_GAP, `obstacles at (${a.x},${a.y}) and (${b.x},${b.y}) leave a ${gap} gap`);
-      }
-      // The spawn ring around the middle, plus half a cube.
-      const cx = Math.max(Math.abs(ARENA_WIDTH / 2 - a.x) - a.hw, 0);
-      const cy = Math.max(Math.abs(ARENA_HEIGHT / 2 - a.y) - a.hh, 0);
-      assert.ok(Math.hypot(cx, cy) > SPAWN_RADIUS + 12, `obstacle ${i} overlaps the spawn ring`);
     }
+  });
+
+  it("Ice Rink: you slide, walls still stop you, and normal ground stops at once", () => {
+    const ice = ARENA_BY_ID.ice;
+    const dt = 1 / TICK_RATE;
+    const right = { moveX: 1, moveY: 0, jump: 0 };
+    const idle = { moveX: 0, moveY: 0, jump: 0 };
+    const e = { x: ice.width / 2, y: ice.height / 2, vx: 0, vy: 0, z: 0, vz: 0 };
+
+    stepEntity(e, right, dt, ice);
+    assert.ok(e.vx > 0 && e.vx < PLAYER_SPEED * 0.2, "speeds up gradually, not instantly");
+    for (let i = 0; i < 40; i++) { stepEntity(e, right, dt, ice); }
+    assert.ok(e.vx > PLAYER_SPEED * 0.95, "reaches nearly full speed");
+    stepEntity(e, idle, dt, ice);
+    assert.ok(e.vx > PLAYER_SPEED * 0.5, "keeps sliding after you let go");
+
+    const wall = { x: ice.width - 12 - 2, y: ice.height / 2, vx: 250, vy: 0, z: 0, vz: 0 };
+    stepEntity(wall, right, dt, ice);
+    assert.strictEqual(wall.vx, 0, "the arena wall stops a slide dead");
+
+    const grippy = { x: classic.width / 2, y: classic.height / 2, vx: 0, vy: 0, z: 0, vz: 0 };
+    stepEntity(grippy, right, dt, classic);
+    assert.strictEqual(grippy.vx, PLAYER_SPEED);
+    stepEntity(grippy, idle, dt, classic);
+    assert.strictEqual(grippy.vx, 0, "classic ground stops at once");
+  });
+
+  it("Moon Dunes: low gravity makes the same jump go much higher", () => {
+    const moon = ARENA_BY_ID.moon;
+    const dt = 1 / TICK_RATE;
+    const apexOf = (arena: typeof moon) => {
+      const e = { x: arena.width / 2, y: arena.height / 2, vx: 0, vy: 0, z: 0, vz: 0 };
+      let apex = 0;
+      stepEntity(e, { moveX: 0, moveY: 0, jump: 1 }, dt, arena);
+      for (let i = 0; i < 80; i++) { stepEntity(e, { moveX: 0, moveY: 0, jump: 0 }, dt, arena); apex = Math.max(apex, e.z); }
+      return apex;
+    };
+    const moonApex = apexOf(moon);
+    assert.ok(moonApex > 140 && moonApex < 200, `moon apex ${moonApex}`);
+    assert.ok(moonApex > apexOf(classic) * 2, "more than twice as high as classic");
+  });
+
+  it("The Maze: tall walls cannot be jumped, low walls can", () => {
+    const maze = ARENA_BY_ID.maze;
+    const dt = 1 / TICK_RATE;
+    const climb = (fromY: number) => {
+      const e = { x: 330, y: fromY, vx: 0, vy: 0, z: 0, vz: 0 };
+      for (let i = 0; i < 45; i++) { stepEntity(e, { moveX: 0, moveY: -1, jump: 1 }, dt, maze); }
+      return e.y;
+    };
+    // Top rail: a tall wall (h100) centred at y=140, half-thickness 12; a player's edge stops at y=164.
+    assert.ok(climb(190) >= 164 - 1, "stopped by the tall wall");
+    // Hurdle: a low wall (h45) at y=225 between x 200..400.
+    const hurdle = { x: 300, y: 250, vx: 0, vy: 0, z: 0, vz: 0 };
+    for (let i = 0; i < 30; i++) { stepEntity(hurdle, { moveX: 0, moveY: -1, jump: 1 }, dt, maze); }
+    assert.ok(hurdle.y < 213, `vaulted the low wall (ended at y=${hurdle.y})`);
   });
 
   it("jumps high enough for steps but not tall blocks, and lands on surfaces", () => {
@@ -124,25 +185,25 @@ describe("testing your Colyseus app", () => {
     const idle = { moveX: 0, moveY: 0, jump: 0 };
 
     // Flat ground in the spawn area: leave the floor, peak, come back down.
-    const e = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2, vx: 0, vy: 0, z: 0, vz: 0 };
-    stepEntity(e, { ...idle, jump: 1 }, dt);
+    const e = { x: classic.width / 2, y: classic.height / 2, vx: 0, vy: 0, z: 0, vz: 0 };
+    stepEntity(e, { ...idle, jump: 1 }, dt, classic);
     assert.ok(e.z > 0, "left the ground");
     let apex = e.z;
-    for (let i = 0; i < 40; i++) { stepEntity(e, idle, dt); apex = Math.max(apex, e.z); }
+    for (let i = 0; i < 40; i++) { stepEntity(e, idle, dt, classic); apex = Math.max(apex, e.z); }
     assert.strictEqual(e.z, 0, "landed");
     assert.ok(apex > 55 && apex < 80, `apex ${apex}: clears 50-high steps, not 80-high blocks`);
 
     // A step (290, 330, h40): a falling player comes to rest on top of it.
     const s = { x: 290, y: 330, vx: 0, vy: 0, z: 60, vz: 0 };
-    for (let i = 0; i < 30; i++) { stepEntity(s, idle, dt); }
+    for (let i = 0; i < 30; i++) { stepEntity(s, idle, dt, classic); }
     assert.strictEqual(s.z, 40);
 
     // The corner fortress (290, 210, h80) stops a grounded player but not one above it.
     const low = { x: 232, y: 210, vx: 0, vy: 0, z: 0, vz: 0 };
-    stepEntity(low, { ...idle, moveX: 1 }, dt);
+    stepEntity(low, { ...idle, moveX: 1 }, dt, classic);
     assert.strictEqual(low.x, 232, "blocked from the ground");
     const high = { x: 232, y: 210, vx: 0, vy: 0, z: 85, vz: 0 };
-    stepEntity(high, { ...idle, moveX: 1 }, dt);
+    stepEntity(high, { ...idle, moveX: 1 }, dt, classic);
     assert.ok(high.x > 232, "walks over it from above");
   });
 
@@ -213,5 +274,39 @@ describe("testing your Colyseus app", () => {
 
   it("has a model file for every pet", () => {
     for (const pet of PETS) { assert.ok(existsSync(`public/models/animal-${pet}.glb`), `missing ${pet}`); }
+  });
+
+  it("rooms rotate arenas each round, respawn everyone, and can be locked", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true });
+    await colyseus.connectTo(room, { name: "Ann" });
+    await colyseus.connectTo(room, { name: "Bo" });
+    const settle = async (done: () => boolean, steps = 90) => {
+      for (let i = 0; i < steps && !done(); i++) { await room.waitForNextTimestep(); }
+    };
+
+    const first = room.state.arena;
+    assert.ok(ARENAS.some((a) => a.id === first), "starts in a known arena");
+
+    (room as any).roundClock = 0.001;
+    await settle(() => !!room.state.winner);
+    assert.ok(room.state.nextArena && room.state.nextArena !== first, "announces a different arena next");
+    const next = room.state.nextArena;
+
+    (room as any).overLeft = 0.001;
+    await settle(() => !room.state.winner);
+    assert.strictEqual(room.state.arena, next, "the next round uses the announced arena");
+    const arena = ARENA_BY_ID[next];
+    for (const p of room.state.players.values()) {
+      const away = Math.hypot(p.x - arena.width / 2, p.y - arena.height / 2);
+      assert.ok(Math.abs(away - arena.spawnRadius) < 5 && p.z === 0, "respawned on the spawn ring");
+    }
+
+    const locked = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "ice" });
+    await colyseus.connectTo(locked, { name: "Cy" });
+    await colyseus.connectTo(locked, { name: "Di" });
+    assert.strictEqual(locked.state.arena, "ice");
+    (locked as any).roundClock = 0.001;
+    for (let i = 0; i < 90 && !locked.state.winner; i++) { await locked.waitForNextTimestep(); }
+    assert.strictEqual(locked.state.nextArena, "ice", "a locked room keeps its arena");
   });
 });

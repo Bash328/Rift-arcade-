@@ -2,7 +2,8 @@ import { Room, Client, CloseCode, type StepContext } from "colyseus";
 import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { stepEntity } from "../shared/movement.js";
-import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT, SPAWN_RADIUS, PLAYER_HALF, TAG_COOLDOWN, ROUND_SECONDS, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
+import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
+import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
@@ -22,7 +23,9 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
 
   private joinCount = 0;
   private cooldown = 0;
-  private roundClock = ROUND_SECONDS;
+  private roundClock = 0;
+  /** Set when a private room's host picked one arena to keep. */
+  private lockedArena?: string;
   private overLeft = 0;
 
   messages = {
@@ -35,7 +38,12 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     // The room id doubles as the invite code. Private rooms skip quick-play matchmaking.
     this.roomId = await freeRoomCode();
     if (options?.private) { await this.setPrivate(true); }
-    this.state.timeLeft = ROUND_SECONDS;
+    // A private room's host can lock one arena; otherwise every round gets a different one.
+    this.lockedArena = ARENAS.some((a) => a.id === options?.arena) ? options.arena : undefined;
+    this.state.arena = this.lockedArena ?? this.pickArena("");
+    this.state.nextArena = this.state.arena;
+    this.roundClock = this.arena.roundSeconds;
+    this.state.timeLeft = this.roundClock;
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
   }
 
@@ -46,8 +54,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     const n = this.joinCount++;
     const angle = n * 2.399963;
     this.state.players.set(client.sessionId, new Player({
-      x: ARENA_WIDTH / 2 + Math.cos(angle) * SPAWN_RADIUS,
-      y: ARENA_HEIGHT / 2 + Math.sin(angle) * SPAWN_RADIUS,
+      ...this.spawnPoint(angle),
       vx: 0,
       vy: 0,
       z: 0,
@@ -83,7 +90,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       if (!channel) { continue; }
 
       for (const input of channel) {
-        stepEntity(player, input, ctx.dt);
+        stepEntity(player, input, ctx.dt, this.arena);
       }
     }
 
@@ -120,14 +127,40 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     }
     this.state.winner = best?.name ?? "";
     this.overLeft = ROUND_END_PAUSE;
+    // Announce where the next round will be played.
+    this.state.nextArena = this.lockedArena ?? this.pickArena(this.state.arena);
   }
 
   private newRound() {
     for (const player of this.state.players.values()) { player.score = 0; }
-    this.roundClock = ROUND_SECONDS;
-    this.state.timeLeft = ROUND_SECONDS;
+    this.state.arena = this.state.nextArena;
+    this.roundClock = this.arena.roundSeconds;
+    this.state.timeLeft = this.roundClock;
     this.state.winner = "";
     this.cooldown = 0;
+    this.respawn();
+  }
+
+  private get arena(): Arena { return arenaOf(this.state.arena); }
+
+  /** A random arena other than `not`. */
+  private pickArena(not: string): string {
+    const options = ARENAS.filter((a) => a.id !== not);
+    return options[Math.floor(Math.random() * options.length)].id;
+  }
+
+  private spawnPoint(angle: number) {
+    const { width, height, spawnRadius } = this.arena;
+    return { x: width / 2 + Math.cos(angle) * spawnRadius, y: height / 2 + Math.sin(angle) * spawnRadius };
+  }
+
+  /** New arena, new round: everyone back on an even ring around the middle. */
+  private respawn() {
+    const players = [...this.state.players.values()];
+    players.forEach((p, i) => {
+      Object.assign(p, this.spawnPoint((i / players.length) * Math.PI * 2));
+      p.vx = p.vy = p.z = p.vz = 0;
+    });
   }
 
   /**

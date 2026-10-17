@@ -1,4 +1,5 @@
-import { ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, PLAYER_SPEED, OBSTACLES, JUMP_SPEED, GRAVITY } from "./constants.js";
+import { PLAYER_HALF, PLAYER_SPEED, JUMP_SPEED, GRAVITY } from "./constants.js";
+import type { Arena, Obstacle } from "./arenas.js";
 
 /**
  * Structural types on purpose: the same step runs on a server Schema instance
@@ -11,26 +12,27 @@ export interface MoveInputLike { moveX: number; moveY: number; jump: number; }
 const clamp = (value: number, min: number, max: number) =>
   (value < min ? min : value > max ? max : value);
 
-const overlaps = (o: (typeof OBSTACLES)[number], x: number, y: number) =>
+const overlaps = (o: Obstacle, x: number, y: number) =>
   Math.abs(x - o.x) < o.hw + PLAYER_HALF && Math.abs(y - o.y) < o.hh + PLAYER_HALF;
 
 /** A surface blocks walking only while the player's feet (z) are below its top. */
-const blockedAt = (x: number, y: number, z: number) =>
-  OBSTACLES.some((o) => overlaps(o, x, y) && z < o.h);
+const blockedAt = (arena: Arena, x: number, y: number, z: number) =>
+  arena.obstacles.some((o) => overlaps(o, x, y) && z < o.h);
 
 /** Height of the highest surface under the player's footprint (0 = the floor). */
-export const floorAt = (x: number, y: number) =>
-  OBSTACLES.reduce((top, o) => (overlaps(o, x, y) && o.h > top ? o.h : top), 0);
+export const floorAt = (arena: Arena, x: number, y: number) =>
+  arena.obstacles.reduce((top, o) => (overlaps(o, x, y) && o.h > top ? o.h : top), 0);
 
 /**
  * The single movement step, run identically by the server (once per received
- * input) and by the client reconciler (predict, then replay on rollback).
+ * input) and by the client reconciler (predict, then replay on rollback). The
+ * arena sets how it feels: gravity, jump strength, and how slippery the floor is.
  *
- * Pure function of (state, input, dt): no clocks, no randomness, no reads
- * outside its arguments. That is the whole contract — break it and the client's
+ * Pure function of (state, input, dt, arena): no clocks, no randomness, no reads
+ * outside its arguments. That is the whole contract - break it and the client's
  * prediction drifts from the server every time.
  */
-export function stepEntity(entity: EntityState, input: MoveInputLike, dt: number): void {
+export function stepEntity(entity: EntityState, input: MoveInputLike, dt: number, arena: Arena): void {
   let dirX = input.moveX;
   let dirY = input.moveY;
 
@@ -40,17 +42,21 @@ export function stepEntity(entity: EntityState, input: MoveInputLike, dt: number
     dirY *= Math.SQRT1_2;
   }
 
-  let vx = dirX * PLAYER_SPEED;
-  let vy = dirY * PLAYER_SPEED;
+  // Velocity follows the controls: at once on normal ground, gradually on ice.
+  const follow = arena.slide === 0 ? 1 : 1 - Math.exp(-dt / arena.slide);
+  const wantVx = dirX * PLAYER_SPEED;
+  const wantVy = dirY * PLAYER_SPEED;
+  let vx = follow === 1 ? wantVx : entity.vx + (wantVx - entity.vx) * follow;
+  let vy = follow === 1 ? wantVy : entity.vy + (wantVy - entity.vy) * follow;
 
   const wantX = entity.x + vx * dt;
   const wantY = entity.y + vy * dt;
 
   // Axis-separated, so a player slides along a pillar face instead of sticking.
-  const clampedX = clamp(wantX, PLAYER_HALF, ARENA_WIDTH - PLAYER_HALF);
-  const x = blockedAt(clampedX, entity.y, entity.z) ? entity.x : clampedX;
-  const clampedY = clamp(wantY, PLAYER_HALF, ARENA_HEIGHT - PLAYER_HALF);
-  const y = blockedAt(x, clampedY, entity.z) ? entity.y : clampedY;
+  const clampedX = clamp(wantX, PLAYER_HALF, arena.width - PLAYER_HALF);
+  const x = blockedAt(arena, clampedX, entity.y, entity.z) ? entity.x : clampedX;
+  const clampedY = clamp(wantY, PLAYER_HALF, arena.height - PLAYER_HALF);
+  const y = blockedAt(arena, x, clampedY, entity.z) ? entity.y : clampedY;
 
   // Hitting a wall or pillar also kills the velocity heading into it, so the
   // reconciler replays the same stop the server did.
@@ -59,10 +65,10 @@ export function stepEntity(entity: EntityState, input: MoveInputLike, dt: number
 
   // Vertical: jump only from a surface, then gravity; land on the highest surface
   // under the new position (the floor, a step, a block top).
-  const floor = floorAt(x, y);
+  const floor = floorAt(arena, x, y);
   let vz = entity.vz;
-  if (input.jump && entity.z <= floor) { vz = JUMP_SPEED; }
-  vz -= GRAVITY * dt;
+  if (input.jump && entity.z <= floor) { vz = JUMP_SPEED * arena.jump; }
+  vz -= GRAVITY * arena.gravity * dt;
   let z = entity.z + vz * dt;
   if (z <= floor) { z = floor; vz = 0; }
 

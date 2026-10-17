@@ -95,14 +95,14 @@ export function createStage(arenaEl: HTMLElement) {
 
 /** A dark solid box with glowing edges. Sim (x, y) maps to world (x, z). */
 export function neonBox(
-  scene: THREE.Scene, w: number, h: number, d: number, x: number, y: number, z: number, edge: number,
+  parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, edge: number, body = 0x16102b,
 ) {
   const geo = new THREE.BoxGeometry(w, h, d);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x16102b, roughness: 0.6 }));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: body, roughness: 0.6 }));
   mesh.position.set(x, y, z);
   mesh.castShadow = mesh.receiveShadow = true;
   mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: edge })));
-  scene.add(mesh);
+  parent.add(mesh);
   return mesh;
 }
 
@@ -344,28 +344,35 @@ export function createCameraRig(
   overviewLook: THREE.Vector3,
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number },
 ) {
-  camera.position.copy(overviewPos);
-  camera.lookAt(overviewLook);
+  let view = { pos: overviewPos.clone(), look: overviewLook.clone(), bounds };
+  camera.position.copy(view.pos);
+  camera.lookAt(view.look);
 
   const followMq = matchMedia("(pointer: coarse), (max-width: 700px)");
   const camGoal = new THREE.Vector3();
   const lookGoal = new THREE.Vector3();
   const look = overviewLook.clone();
 
-  return (target?: THREE.Vector3) => {
+  const update = (target?: THREE.Vector3) => {
     if (followMq.matches && target) {
-      const fx = Math.min(Math.max(target.x, bounds.minX), bounds.maxX);
-      const fz = Math.min(Math.max(target.z, bounds.minZ), bounds.maxZ);
+      const fx = Math.min(Math.max(target.x, view.bounds.minX), view.bounds.maxX);
+      const fz = Math.min(Math.max(target.z, view.bounds.minZ), view.bounds.maxZ);
       camGoal.set(fx, 300, fz + 300);
       lookGoal.set(fx, 0, fz);
     } else {
-      camGoal.copy(overviewPos);
-      lookGoal.copy(overviewLook);
+      camGoal.copy(view.pos);
+      lookGoal.copy(view.look);
     }
     camera.position.lerp(camGoal, 0.12);
     look.lerp(lookGoal, 0.12);
     camera.lookAt(look);
   };
+  /** Frame a different arena (the next round may be another size). */
+  update.setView = (pos: THREE.Vector3, lookAt: THREE.Vector3, newBounds: typeof bounds, snap = false) => {
+    view = { pos: pos.clone(), look: lookAt.clone(), bounds: newBounds };
+    if (snap) { camera.position.copy(pos); look.copy(lookAt); camera.lookAt(look); } // no fly-in on first load
+  };
+  return update;
 }
 
 /** Names come from other players, so the scoreboard is built with textContent only. */
