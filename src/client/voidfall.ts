@@ -79,11 +79,11 @@ async function main() {
   });
   showRoomTag(room, "Voidfall");
   audio.play("join");
-  const predict = Predict.get(room);
-
   // Others are drawn `delay` ms behind the newest update so a late or bunched-up one does not show.
   // Updates arrive every ~33 ms, so 100 ms is a cushion of 3 updates; phones get a little more.
-  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], delay: LITE ? 130 : 100, smoothMs: 65 });
+  const predict = Predict.get(room, { mode: "lerp", delay: LITE ? 130 : 100 });
+
+  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
   const input = room.input<MoveInput>({ mode: "reliable" });
 
   // The first patch is what creates our own player.

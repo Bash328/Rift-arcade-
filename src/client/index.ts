@@ -133,15 +133,15 @@ async function main() {
   });
   showRoomTag(room, "Cube Tag");
   audio.play("join");
-  const predict = Predict.get(room);
+  // Others are drawn `delay` ms behind the newest update so a late or bunched-up one does not show.
+  // Updates arrive every ~33 ms, so 100 ms is a cushion of 3 updates; phones get a little more.
+  const predict = Predict.get(room, { mode: "lerp", delay: LITE ? 130 : 100 });
 
   // Other players' inputs aren't ours to predict: interpolate them toward the
   // latest snapshot instead. `smoothMs` springs the interpolated output - ~65 ms
   // of extra display lag buys velocity that stays continuous even when the
   // snapshot stream is rough. Use 0 where draw == hit precision matters most.
-  // Others are drawn `delay` ms behind the newest update so a late or bunched-up one does not show.
-  // Updates arrive every ~33 ms, so 100 ms is a cushion of 3 updates; phones get a little more.
-  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], delay: LITE ? 130 : 100, smoothMs: 65 });
+  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
 
   const input = room.input<MoveInput>({ mode: "reliable" });
 
