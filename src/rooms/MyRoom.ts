@@ -17,7 +17,7 @@ const TAG_BACK_BLOCK = 2;
 const BOT_NAMES = ["Pip", "Moss", "Dot", "Bolt", "Zig", "Fizz", "Nova", "Taco"];
 
 /** What a bot is doing: how it steers, and a stuck check that makes it hop and turn. */
-interface BotBrain { dirX: number; dirY: number; retarget: number; stuckClock: number; lastX: number; lastY: number; unstick: number; altX: number; altY: number }
+interface BotBrain { dirX: number; dirY: number; retarget: number; stuckClock: number; lastX: number; lastY: number; unstick: number; altX: number; altY: number; scatter: number }
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
@@ -197,7 +197,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       hue: (slot * 137.5 + 200) % 360,
       pet: slot % PETS.length,
     }));
-    this.bots.set(id, { dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0 });
+    this.bots.set(id, { dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0, scatter: NaN });
     if (!this.state.it) { this.state.it = id; }
   }
 
@@ -217,15 +217,26 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
         brain.retarget = 0.25 + Math.random() * 0.2;
         let vx = 0, vy = 0;
         if (id === this.state.it) {
-          let best = Infinity;
-          for (const [otherId, other] of this.state.players) {
-            const d = Math.hypot(other.x - bot.x, other.y - bot.y);
-            if (otherId !== id && d < best) { best = d; vx = other.x - bot.x; vy = other.y - bot.y; }
+          // Chase the nearest player who can actually be tagged: the one who was just tagged and is protected from tag-backs
+          // is skipped, or "it" would stand on them until the protection runs out and swap right back.
+          const protectedId = this.safeLeft > 0 ? this.safeId : "";
+          for (const skip of [protectedId, ""]) {
+            let best = Infinity;
+            for (const [otherId, other] of this.state.players) {
+              const d = Math.hypot(other.x - bot.x, other.y - bot.y);
+              if (otherId !== id && otherId !== skip && d < best) { best = d; vx = other.x - bot.x; vy = other.y - bot.y; }
+            }
+            if (best < Infinity) { break; } // with only two players the protected one is the only target
           }
         } else {
           const it = this.state.players.get(this.state.it);
           if (it && Math.hypot(bot.x - it.x, bot.y - it.y) < 450) {
             vx = bot.x - it.x; vy = bot.y - it.y;
+            // Standing on top of "it" gives no direction to run: pick one at random and keep it until clear.
+            if (Math.hypot(vx, vy) < 40) {
+              if (Number.isNaN(brain.scatter)) { brain.scatter = Math.random() * Math.PI * 2; }
+              vx = Math.cos(brain.scatter) * 100; vy = Math.sin(brain.scatter) * 100;
+            } else { brain.scatter = NaN; }
             const edge = 160; // steer back toward the middle when near a wall
             if (bot.x < edge || bot.x > arena.width - edge) { vx += (arena.width / 2 - bot.x) * 2; }
             if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
