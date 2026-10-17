@@ -1,5 +1,6 @@
 import { Room, Client, CloseCode, type StepContext } from "colyseus";
 import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
+import { freeRoomCode } from "./roomCode.js";
 import { stepEntity } from "../shared/movement.js";
 import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, TAG_COOLDOWN, ROUND_SECONDS, ROUND_END_PAUSE } from "../shared/constants.js";
 
@@ -27,7 +28,10 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     // only for things that are not inputs (chat, emotes, …).
   };
 
-  onCreate(options: any) {
+  async onCreate(options: any) {
+    // The room id doubles as the invite code. Private rooms skip quick-play matchmaking.
+    this.roomId = await freeRoomCode();
+    if (options?.private) { await this.setPrivate(true); }
     this.state.timeLeft = ROUND_SECONDS;
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
   }

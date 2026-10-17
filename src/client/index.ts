@@ -2,6 +2,7 @@ import { ColyseusSDK, Callbacks } from "@colyseus/sdk";
 import { Predict } from "@colyseus/sdk/predict";
 import type { default as server } from "../app.config.js";
 import type { MoveInput } from "../rooms/schema/MyRoomState.js";
+import type { MyRoom } from "../rooms/MyRoom.js";
 import * as THREE from "three";
 import { stepEntity } from "../shared/movement.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
@@ -20,6 +21,12 @@ const boardEl = document.getElementById("board")!;
 const stickEl = document.getElementById("stick")!;
 const knobEl = document.getElementById("knob")!;
 const lampEl = document.getElementById("itLamp")!;
+const lobbyEl = document.getElementById("lobby") as HTMLFormElement;
+const nameEl = document.getElementById("nameInput") as HTMLInputElement;
+const codeEl = document.getElementById("codeInput") as HTMLInputElement;
+const msgEl = document.getElementById("lobbyMsg")!;
+const roomTagEl = document.getElementById("roomTag") as HTMLButtonElement;
+const cabEl = document.querySelector(".cab--game")!;
 
 const client = new ColyseusSDK<typeof server>(
   `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`
@@ -135,6 +142,7 @@ function resize() {
   composer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  composer.render(); // so the arena shows behind the lobby before the game loop starts
 }
 new ResizeObserver(resize).observe(arenaEl);
 resize();
@@ -173,6 +181,8 @@ function updateParticles(dt: number) {
 
 const held = new Set<string>();
 addEventListener("keydown", (e) => {
+  // Typing a name or code in the lobby must not steer or jump.
+  if ((e.target as HTMLElement).tagName === "INPUT") { return; }
   // Arrow keys would otherwise scroll the page now that the canvas is tall.
   if (e.key.startsWith("Arrow") || e.key === " ") { e.preventDefault(); }
   held.add(e.key.toLowerCase());
@@ -231,20 +241,89 @@ const setJump = (down: boolean) => { jumpHeld = down; jumpEl.classList.toggle("d
 jumpEl.addEventListener("pointerdown", (e) => { jumpEl.setPointerCapture(e.pointerId); setJump(true); });
 for (const type of ["pointerup", "pointercancel"]) { jumpEl.addEventListener(type, () => setJump(false)); }
 
-function askName(): string {
-  try {
-    const saved = localStorage.getItem("name");
-    if (saved) { return saved; }
-    const name = prompt("Your name?")?.trim() || "Player";
-    localStorage.setItem("name", name);
-    return name;
-  } catch {
-    return "Player";
-  }
+const quickPlay = (name: string) => client.joinOrCreate("my_room", { name });
+type GameRoom = Awaited<ReturnType<typeof quickPlay>>;
+
+const cleanCode = (value: string) => value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+
+function savedName(): string {
+  try { return localStorage.getItem("name") ?? ""; } catch { return ""; }
+}
+
+/**
+ * The lobby: quick play (the public room), a private room with a shareable code,
+ * or join a friend's code. An invite link (?room=CODE) joins straight away once a
+ * name is known.
+ */
+function lobby(): Promise<GameRoom> {
+  nameEl.value = savedName();
+  codeEl.value = cleanCode(new URLSearchParams(location.search).get("room") ?? "");
+
+  return new Promise((resolve) => {
+    async function enter(how: string) {
+      // On a phone, go fullscreen and landscape. Needs the tap that got us here,
+      // so it comes before any await; unsupported browsers (iPhone) just skip it.
+      if (matchMedia("(pointer: coarse)").matches) {
+        document.documentElement.requestFullscreen?.()
+          .then(() => (screen.orientation as any)?.lock?.("landscape"))
+          .catch(() => { /* not supported or refused */ });
+      }
+      const name = nameEl.value.trim().slice(0, 12) || "Player";
+      const code = cleanCode(codeEl.value);
+      if (how === "join" && code.length !== 4) { msgEl.textContent = "Enter the 4-letter room code."; return; }
+      msgEl.textContent = "";
+      lobbyEl.classList.add("busy");
+      try {
+        try { localStorage.setItem("name", name); } catch { /* private mode: just don't remember it */ }
+        const room: GameRoom =
+          how === "create" ? await client.create("my_room", { name, private: true }) :
+          how === "join" ? await client.joinById<MyRoom>(code, { name }) :
+          await quickPlay(name);
+        lobbyEl.hidden = true;
+        cabEl.classList.remove("lobbying");
+        resolve(room);
+      } catch (e) {
+        console.error(e);
+        msgEl.textContent = how === "join" ? "No open room with that code." : "Could not connect. Try again.";
+        lobbyEl.classList.remove("busy");
+      }
+    }
+
+    lobbyEl.addEventListener("submit", (e) => {
+      e.preventDefault();
+      // Enter inside the code box means "join"; otherwise use the button pressed.
+      const pressed = (e.submitter as HTMLButtonElement | null)?.value;
+      void enter(document.activeElement === codeEl && codeEl.value ? "join" : pressed ?? "quick");
+    });
+    codeEl.addEventListener("input", () => { codeEl.value = cleanCode(codeEl.value); });
+
+    if (codeEl.value.length === 4 && nameEl.value) { void enter("join"); }
+    else if (codeEl.value) { msgEl.textContent = `Invited to room ${codeEl.value}. Enter your name, then Join.`; }
+  });
+}
+
+/** The room code chip: tap to share the invite link (share sheet on phones, else copy). */
+function showRoomTag(room: GameRoom) {
+  history.replaceState(null, "", `?room=${room.roomId}`);
+  const label = `ROOM ${room.roomId} - INVITE`;
+  roomTagEl.hidden = false;
+  roomTagEl.textContent = label;
+  roomTagEl.onclick = async () => {
+    const url = `${location.origin}${location.pathname}?room=${room.roomId}`;
+    try {
+      if (navigator.share) { await navigator.share({ title: "Cube Tag", text: "Join my Cube Tag room", url }); return; }
+      await navigator.clipboard.writeText(url);
+      roomTagEl.textContent = "LINK COPIED";
+    } catch {
+      roomTagEl.textContent = url; // clipboard blocked: show it so it can be copied by hand
+    }
+    setTimeout(() => { roomTagEl.textContent = label; }, 2500);
+  };
 }
 
 async function main() {
-  const room = await client.joinOrCreate("my_room", { name: askName() });
+  const room = await lobby();
+  showRoomTag(room);
   const predict = Predict.get(room);
 
   // Other players' inputs aren't ours to predict: interpolate them toward the

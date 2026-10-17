@@ -492,17 +492,135 @@ button.btn {
 .game .cab__deck { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .game { touch-action: manipulation; }
 
-/* ---------- Phones: just the game screen, with the controls under it ---------- */
+/* ---------- Lobby (game page) ---------- */
+
+.lobby {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.7rem;
+  padding: 1rem max(1rem, calc(50% - 11rem));
+  background: #050109d9;
+}
+.lobby[hidden] { display: none; }
+.lobby__title {
+  margin: 0 0 0.2rem;
+  text-align: center;
+  font: 800 clamp(1.1rem, 4vw, 1.5rem)/1 var(--display);
+  letter-spacing: 0.14em;
+  color: var(--amber);
+  text-shadow: 0 0 8px var(--amber);
+}
+.lobby__field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--lavender); }
+.lobby input {
+  min-height: 2.75rem;
+  padding: 0 0.8rem;
+  border: 2px solid #35e5ff80;
+  border-radius: 8px;
+  background: #0a0613;
+  color: var(--text);
+  font: 700 1rem var(--ui);
+}
+.lobby input:focus-visible { outline: 3px solid var(--cyan); outline-offset: 2px; }
+.lobby input::placeholder { color: #6f62a0; }
+.lobby__join { display: flex; gap: 0.5rem; }
+.lobby__join input { flex: 1; min-width: 0; text-align: center; text-transform: uppercase; letter-spacing: 0.4em; }
+
+.lbtn {
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 8px;
+  font: 800 0.85rem/1 var(--display);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fff;
+  background: #35285a;
+  cursor: pointer;
+  transition: transform 0.15s var(--ease), filter 0.15s;
+}
+.lbtn--pink { background: linear-gradient(180deg, var(--pink), var(--violet)); text-shadow: 0 0 8px #fff8; }
+.lbtn--cyan { background: #0b4a57; box-shadow: inset 0 0 0 2px var(--cyan); }
+.lbtn:hover { filter: brightness(1.15); }
+.lbtn:active { transform: translateY(2px); }
+.lobby.busy .lbtn { opacity: 0.5; pointer-events: none; }
+.lobby__msg { min-height: 1.4em; margin: 0; text-align: center; font-size: 0.8rem; color: #ff8aa8; }
+
+.roomtag {
+  position: absolute;
+  inset: auto auto 0.6rem 0.8rem;
+  z-index: 6;
+  max-width: calc(100% - 1.6rem);
+  padding: 0.4rem 0.7rem;
+  border: 1px solid #35e5ff80;
+  border-radius: 6px;
+  background: #050109cc;
+  color: var(--cyan);
+  font: 700 0.7rem/1.2 var(--ui);
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.roomtag[hidden] { display: none; }
+.roomtag:hover { background: #0b4a57; }
+
+/* ---------- Phones: landscape, full-screen game with the controls drawn over it ---------- */
+
+.rotate { display: none; }
 
 @media (max-width: 700px), (max-height: 520px) {
   .game { overflow: hidden; overscroll-behavior: none; }
-  .game .play { height: 100dvh; min-height: 0; padding: 0; }
-  .cab--game { height: 100dvh; max-width: none; border-radius: 0; border-width: 0; box-shadow: none; }
-  .cab--game .cab__marquee { height: 44px; font-size: 1rem; border-bottom-width: 2px; }
-  .cab--game .cab__bezel { flex: 1 1 0; min-height: 0; padding: 6px; }
-  .cab--game .cab__screen { aspect-ratio: auto; align-self: stretch; width: 100%; border-radius: 6px; }
-  .cab--game .cab__deck { min-height: 0; margin: 0; padding: 0.6rem 1.5rem 0.9rem; border-radius: 0; justify-content: space-between; }
-  .cab--game .joy { width: 6.2rem; height: 6.2rem; }
-  .cab--game .btn--amber, .placard { display: none; }
-  .cab--game #jump { width: 5rem; height: 5rem; font-size: 0.85rem; }
+  .game .play { position: fixed; inset: 0; display: block; height: auto; min-height: 0; padding: 0; }
+  .cab--game { position: relative; display: block; width: 100%; height: 100%; max-width: none; min-height: 0; border: 0; border-radius: 0; box-shadow: none; background: #000; }
+  .cab--game .cab__bezel { position: absolute; inset: 0; padding: 0; }
+  .cab--game .cab__screen { width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; box-shadow: none; }
+
+  /* The marquee shrinks to a back button and the IT lamp floating over the game. */
+  .cab--game .cab__marquee { position: absolute; inset: 0 0 auto 0; z-index: 20; display: block; height: 0; padding: 0; border: 0; background: none; pointer-events: none; }
+  .cab--game h1 { display: none; }
+  .back { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto max(0.5rem, env(safe-area-inset-left)); padding: 0.55rem; background: #050109aa; pointer-events: auto; }
+  .back span { display: none; }
+  .lamp { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto 50%; translate: -50% 0; }
+  #status { inset: 0.7rem auto auto 3.6rem; max-width: 40%; }
+  .roomtag { inset: auto auto 0.6rem 50%; translate: -50% 0; }
+
+  /* Controls on top of the screen: stick bottom-left, jump bottom-right. */
+  .cab--game .cab__deck {
+    position: absolute; inset: auto 0 0 0; z-index: 20;
+    min-height: 0; margin: 0; border-radius: 0; background: none;
+    padding: 0 max(1.25rem, env(safe-area-inset-right)) max(0.9rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+    align-items: flex-end; justify-content: space-between; pointer-events: none;
+  }
+  .cab--game .joy { width: 6.5rem; height: 6.5rem; pointer-events: auto; background: #05010959; border: 2px solid #35e5ff80; box-shadow: none; }
+  .cab--game .joy__knob { opacity: 0.85; }
+  .cab--game .btns { pointer-events: auto; }
+  .cab--game #jump { width: 5rem; height: 5rem; font-size: 0.85rem; opacity: 0.8; }
+  .cab--game .btn--amber, .placard, .cab__coin { display: none; }
+  .cab--game.lobbying .cab__deck { visibility: hidden; }
+
+  .lobby { z-index: 30; gap: 0.4rem; padding-block: 0.5rem; overflow: auto; }
 }
+
+/* Short screens (a phone on its side): lay the lobby out in two columns. */
+@media (max-height: 520px) {
+  .lobby { display: grid; grid-template-columns: 1fr 1fr; align-content: center; column-gap: 1.25rem; padding-inline: max(1rem, calc(50% - 16rem)); }
+  .lobby[hidden] { display: none; }
+  .lobby__title, .lobby__msg { grid-column: 1 / -1; }
+  .lobby__title { margin: 0; }
+}
+
+/* A phone held upright: ask for landscape. */
+@media (orientation: portrait) and (pointer: coarse) and (max-width: 700px) {
+  .rotate {
+    position: fixed; inset: 0; z-index: 100;
+    display: grid; place-content: center; justify-items: center; gap: 1.2rem;
+    background: var(--void); text-align: center; padding: 2rem;
+    font: 700 1rem/1.4 var(--display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--cyan);
+  }
+  .rotate svg { width: 5rem; height: 5rem; animation: turn 2.4s var(--ease) infinite; }
+}
+@keyframes turn { 0%, 15% { rotate: 0deg; } 55%, 100% { rotate: -90deg; } }
+@media (prefers-reduced-motion: reduce) { .rotate svg { animation: none; rotate: -90deg; } }

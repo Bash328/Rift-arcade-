@@ -75,13 +75,18 @@ describe("testing your Colyseus app", () => {
     const b = await colyseus.connectTo(room, { name: "Bo" });
     room.state.players.get(b.sessionId).score = 10;
 
+    // Wait a few steps rather than exactly one: a step already in flight can use the old clock.
+    const settle = async (done: () => boolean) => {
+      for (let i = 0; i < 5 && !done(); i++) { await room.waitForNextTimestep(); }
+    };
+
     (room as any).roundClock = 0.001;
-    await room.waitForNextTimestep();
+    await settle(() => !!room.state.winner);
     assert.strictEqual(room.state.winner, "Bo");
 
     (room as any).overLeft = 0.001;
-    await room.waitForNextTimestep();
-    assert.strictEqual(room.state.winner, "");
+    await settle(() => !room.state.winner);
+    assert.ok(!room.state.winner, "winner cleared for the new round");
     assert.strictEqual(room.state.players.get(b.sessionId).score, 0);
   });
 
@@ -135,5 +140,17 @@ describe("testing your Colyseus app", () => {
     const high = { x: 177, y: 170, vx: 0, vy: 0, z: 85, vz: 0 };
     stepEntity(high, { ...idle, moveX: 1 }, dt);
     assert.ok(high.x > 177, "walks over it from above");
+  });
+
+  it("uses a 4-letter code as the room id, and keeps private rooms out of quick play", async () => {
+    const priv = await colyseus.createRoom<MyRoomState>("my_room", { private: true });
+    assert.match(priv.roomId, /^[A-HJ-NP-Z]{4}$/);
+
+    // Quick play must not land in the private room; the code still works.
+    const quick = await colyseus.sdk.joinOrCreate("my_room", { name: "Quick" });
+    assert.notStrictEqual(quick.roomId, priv.roomId);
+    const friend = await colyseus.sdk.joinById(priv.roomId, { name: "Friend" });
+    assert.strictEqual(friend.roomId, priv.roomId);
+    assert.strictEqual(priv.state.players.size, 1);
   });
 });

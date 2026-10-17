@@ -13,7 +13,7 @@
   </head>
   <body class="game">
     <main class="play">
-      <div class="cab cab--lit cab--game">
+      <div class="cab cab--lit cab--game lobbying">
         <header class="cab__marquee">
           <a class="back" href="/">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3L5 8l5 5" /></svg>
@@ -25,7 +25,21 @@
 
         <div class="cab__bezel">
           <div class="cab__screen" id="arena">
-            <p id="status" role="status">Connecting...</p>
+            <form id="lobby" class="lobby">
+              <p class="lobby__title">READY PLAYER?</p>
+              <label class="lobby__field">Your name
+                <input id="nameInput" maxlength="12" autocomplete="nickname" spellcheck="false" />
+              </label>
+              <button class="lbtn lbtn--pink" type="submit" value="quick">Quick play</button>
+              <button class="lbtn lbtn--cyan" type="submit" value="create">Create private room</button>
+              <div class="lobby__join">
+                <input id="codeInput" maxlength="4" placeholder="CODE" aria-label="Room code" autocapitalize="characters" autocomplete="off" spellcheck="false" />
+                <button class="lbtn" type="submit" value="join">Join</button>
+              </div>
+              <p id="lobbyMsg" class="lobby__msg" role="alert"></p>
+            </form>
+            <button id="roomTag" class="roomtag" type="button" hidden></button>
+            <p id="status" role="status"></p>
             <div id="board"></div>
           </div>
         </div>
@@ -37,11 +51,15 @@
 
         <section class="placard">
           <h2>HOW TO PLAY</h2>
-          <p>Steer with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, the arrow keys, or drag the joystick, and jump with <kbd>SPACE</kbd> or the JUMP button. The big glowing red cube is IT: touch someone to pass it on. Low steps and walls can be jumped onto; chain them to reach the tall blocks, where nobody on the ground can tag you. Every second you are not IT scores a point, and the highest score after 60 seconds wins. Open the link in a second tab or send it to a friend to start a match.</p>
+          <p>Steer with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, the arrow keys, or drag the joystick, and jump with <kbd>SPACE</kbd> or the JUMP button. The big glowing red cube is IT: touch someone to pass it on. Low steps and walls can be jumped onto; chain them to reach the tall blocks, where nobody on the ground can tag you. Every second you are not IT scores a point, and the highest score after 60 seconds wins. To play with friends, create a private room and tap the ROOM code to share the invite link, or tell them the 4-letter code.</p>
         </section>
         <div class="cab__base"></div>
       </div>
     </main>
+    <div class="rotate" role="alert">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18.5h2" /></svg>
+      <p>Rotate your phone to play</p>
+    </div>
     <script type="module" src="/src/client/index.ts"></script>
   </body>
 </html>
