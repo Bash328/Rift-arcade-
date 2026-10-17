@@ -10,6 +10,7 @@ import {
   NEON_CYAN, NEON_PINK, createStage, neonBox, createParticles, createControls,
   runLobby, showRoomTag, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen,
 } from "./kit.js";
+import { Avatar } from "./avatars.js";
 
 const statusEl = document.getElementById("status")!;
 const arenaEl = document.getElementById("arena")!;
@@ -107,28 +108,22 @@ async function main() {
     step: (ctx, predicted, command) => stepEntity(predicted, command, ctx.dt),
   });
 
-  const cubes = new Map<string, THREE.Mesh>();
+  const avatars = new Map<string, Avatar>();
   const callbacks = Callbacks.get(room);
 
   callbacks.onAdd("players", (player, sessionId) => {
-    const cube = new THREE.Mesh(
-      new THREE.BoxGeometry(PLAYER_HALF * 2, PLAYER_HALF * 2, PLAYER_HALF * 2),
-      new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(player.hue / 360, 0.7, 0.55) }),
-    );
-    cube.castShadow = true;
-    scene.add(cube);
-    cubes.set(sessionId, cube);
+    avatars.set(sessionId, new Avatar(scene, player.pet, player.hue));
   });
 
   callbacks.onRemove("players", (_player, sessionId) => {
-    scene.remove(cubes.get(sessionId)!);
-    cubes.delete(sessionId);
+    avatars.get(sessionId)?.dispose();
+    avatars.delete(sessionId);
   });
 
   room.onLeave(() => {
     statusEl.textContent = "Disconnected";
-    cubes.forEach((cube) => scene.remove(cube));
-    cubes.clear();
+    avatars.forEach((avatar) => avatar.dispose());
+    avatars.clear();
   });
 
   let boardKey = "";
@@ -149,6 +144,8 @@ async function main() {
   let last = performance.now();
   let prevWinner = "";
   const zero = new THREE.Vector3();
+  const feet = new THREE.Vector3();
+  const chest = new THREE.Vector3();
 
   function frame(now: number) {
     const dt = Math.min((now - last) / 1000, 0.1);
@@ -163,40 +160,33 @@ async function main() {
       input.send();
     }
 
-    // A new "it": pop the cube and burst particles from it.
+    // A new "it": pop the pet and burst sparkles from it.
     if (room.state.it !== prevIt) {
-      const cube = cubes.get(room.state.it);
-      if (cube && prevIt) {
+      const avatar = avatars.get(room.state.it);
+      if (avatar && prevIt) {
         audio.play("tag", room.state.it === room.sessionId || prevIt === room.sessionId ? 1 : 0.4);
-        cube.userData.pop = 1;
+        avatar.pop = 1;
+        chest.copy(avatar.group.position).y += PLAYER_HALF;
         for (let i = 0; i < 30; i++) {
           const v = new THREE.Vector3((Math.random() - 0.5) * 500, Math.random() * 250, (Math.random() - 0.5) * 500);
-          particles.emit(cube.position, i % 2 ? 0xff4040 : 0xffffff, v, 0.7, 7);
+          particles.emit(chest, i % 2 ? 0xff4040 : 0xffffff, v, 0.7, 7, "star");
         }
       }
       prevIt = room.state.it;
     }
 
     for (const [sessionId, player] of room.state.players) {
-      const cube = cubes.get(sessionId);
-      if (!cube) { continue; }
+      const avatar = avatars.get(sessionId);
+      if (!avatar) { continue; }
       const isIt = sessionId === room.state.it;
-      const base = isIt ? 1.3 : 1;
-      // Squash and stretch right after being tagged.
-      const pop = cube.userData.pop ?? 0;
-      cube.userData.pop = Math.max(0, pop - dt / 0.4);
-      const w = pop * pop;
-      cube.scale.set(base * (1 + 0.5 * w), base * (1 - 0.4 * w), base * (1 + 0.5 * w));
       // Predicted for us, interpolated for everyone else - one read either way.
-      cube.position.set(predict.value(player, "x"), PLAYER_HALF * cube.scale.y + predict.value(player, "z"), predict.value(player, "y"));
-      const mat = cube.material as THREE.MeshStandardMaterial;
-      mat.emissive.set(isIt ? 0xff2020 : 0x000000);
+      feet.set(predict.value(player, "x"), predict.value(player, "z"), predict.value(player, "y"));
+      avatar.update(dt, feet, { it: isIt, celebrate: !!room.state.winner && player.name === room.state.winner });
 
-      // Trail: a fading speck whenever the cube has moved.
-      const prev = cube.userData.trail as THREE.Vector3 | undefined;
-      if (!prev || prev.distanceTo(cube.position) > 6) {
-        if (prev) { particles.emit(prev, isIt ? 0xff4040 : mat.color, zero, 0.4, 9); }
-        cube.userData.trail = cube.position.clone();
+      // Trail: a fading glow whenever the pet has moved.
+      if (!avatar.trail || avatar.trail.distanceTo(feet) > 14) {
+        if (avatar.trail) { particles.emit(avatar.trail, isIt ? 0xff4040 : 0x66e6ff, zero, 0.45, 5); }
+        avatar.trail = feet.clone().setY(feet.y + 6);
       }
     }
     particles.update(dt);
@@ -208,7 +198,7 @@ async function main() {
 
     controls.syncKnob();
     lampEl.classList.toggle("on", room.state.it === room.sessionId);
-    moveCamera(cubes.get(room.sessionId)?.position);
+    moveCamera(avatars.get(room.sessionId)?.group.position);
 
     refreshBoard();
     const { timeLeft, winner, it } = room.state;

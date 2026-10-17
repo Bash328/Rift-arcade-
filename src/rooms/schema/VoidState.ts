@@ -9,6 +9,8 @@ export const VoidPlayer = schema({
   vz: t.number(),
   name: t.string(),
   hue: t.number(),
+  /** Index into PETS: which animal this player is. */
+  pet: t.number(),
   alive: t.boolean(),
 });
 export type VoidPlayer = SchemaType<typeof VoidPlayer>;

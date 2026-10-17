@@ -38,6 +38,9 @@ export const OBSTACLES = QUARTER.flatMap((o) => [
 export const JUMP_SPEED = 460;
 export const GRAVITY = 1400;
 
+/** The pet models players get, in join order (files are /models/animal-<name>.glb). */
+export const PETS = ["fox", "cat", "dog", "bunny", "panda", "pig", "tiger", "lion", "koala", "cow", "penguin", "monkey"];
+
 /** Units per second at full stick. */
 export const PLAYER_SPEED = 300;
 

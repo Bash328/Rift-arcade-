@@ -1,4 +1,5 @@
 import assert from "assert";
+import { existsSync } from "fs";
 import { ColyseusTestServer, boot } from "@colyseus/testing";
 
 import appConfig from "../src/app.config.js";
@@ -6,7 +7,7 @@ import { MyRoomState, type MoveInput } from "../src/rooms/schema/MyRoomState.js"
 import { stepEntity } from "../src/shared/movement.js";
 import { stepVoidEntity, tileAt, GRID, GONE, SOLID } from "../src/shared/void.js";
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
-import { ARENA_WIDTH, ARENA_HEIGHT, OBSTACLES, PLAYER_SPEED, TICK_RATE } from "../src/shared/constants.js";
+import { ARENA_WIDTH, ARENA_HEIGHT, OBSTACLES, PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
 
 describe("testing your Colyseus app", () => {
   let colyseus: ColyseusTestServer<typeof appConfig>;
@@ -208,5 +209,9 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(a.alive, false);
     assert.strictEqual(room.state.phase, "over");
     assert.strictEqual(room.state.winner, "Bo");
+  });
+
+  it("has a model file for every pet", () => {
+    for (const pet of PETS) { assert.ok(existsSync(`public/models/animal-${pet}.glb`), `missing ${pet}`); }
   });
 });

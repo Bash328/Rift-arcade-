@@ -2,7 +2,7 @@ import { Room, Client, CloseCode, type StepContext } from "colyseus";
 import { MyRoomState, Player, MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode } from "./roomCode.js";
 import { stepEntity } from "../shared/movement.js";
-import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, TAG_COOLDOWN, ROUND_SECONDS, ROUND_END_PAUSE } from "../shared/constants.js";
+import { TICK_RATE, ARENA_WIDTH, ARENA_HEIGHT, PLAYER_HALF, TAG_COOLDOWN, ROUND_SECONDS, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   maxClients = 8;
@@ -52,6 +52,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       score: 0,
       name: String(options?.name ?? "").trim().slice(0, 12) || "Player",
       hue: (n * 137.5 + 200) % 360,
+      pet: n % PETS.length,
     }));
     if (!this.state.it) { this.state.it = client.sessionId; }
   }

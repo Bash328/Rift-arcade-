@@ -29,6 +29,8 @@ export const Player = schema({
   name: t.string(),
   /** Cube color, 0-360. */
   hue: t.number(),
+  /** Index into PETS: which animal this player is. */
+  pet: t.number(),
 });
 export type Player = SchemaType<typeof Player>;
 

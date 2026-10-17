@@ -704,3 +704,24 @@ button.btn {
 
 /* A keyboard player in full screen doesn't need the touch controls. */
 @media (pointer: fine) { .is-fullscreen .cab--game .cab__deck { display: none; } }
+
+/* ---------- Full-screen tip ---------- */
+
+.fstip {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  translate: -50% -50%;
+  z-index: 40;
+  width: min(92%, 26rem);
+  max-height: 92%;
+  overflow: auto;
+  padding: 1rem 1.2rem;
+  border: 2px solid var(--cyan);
+  border-radius: 12px;
+  background: #0a0613f2;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.fstip[hidden] { display: none; }
+.fstip p { margin: 0 0 0.7rem; }
+.fstip strong { color: var(--amber); }

@@ -2,7 +2,7 @@ import { Room, Client, type StepContext } from "colyseus";
 import { VoidState, VoidPlayer } from "./schema/VoidState.js";
 import { MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode } from "./roomCode.js";
-import { TICK_RATE } from "../shared/constants.js";
+import { TICK_RATE, PETS } from "../shared/constants.js";
 import {
   GRID, VOID_SIZE, SOLID, CRACKING, GONE, CRACK_TIME, FALL_LIMIT, tileAt, stepVoidEntity,
 } from "../shared/void.js";
@@ -50,6 +50,7 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
       x: VOID_SIZE / 2, y: VOID_SIZE / 2, vx: 0, vy: 0, z: 0, vz: 0,
       name: String(options?.name ?? "").trim().slice(0, 12) || "Player",
       hue: (n * 137.5 + 200) % 360,
+      pet: n % PETS.length,
       alive: !inRound,
     }));
     if (!inRound) { this.spread(); }

@@ -1,0 +1,3 @@
+3D models in this folder are from Kenney's "Cube Pets" pack (https://kenney.nl),
+released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+Attribution is not required.

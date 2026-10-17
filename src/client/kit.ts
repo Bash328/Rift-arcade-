@@ -87,36 +87,54 @@ export function neonBox(
   return mesh;
 }
 
-/** Pooled particles, used for movement trails and bursts. */
+/** A CC0 sprite from /fx (Kenney Particle Pack), loaded once. */
+export function loadFx(name: string): THREE.Texture {
+  const texture = new THREE.TextureLoader().load(`/fx/${name}.png`);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/**
+ * Pooled glow sprites for trails and bursts. They blend additively, so with
+ * bloom they read as light: "glow" is a soft dot, "star" a sparkle.
+ */
 export function createParticles(scene: THREE.Scene) {
-  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const textures = { glow: loadFx("circle_05"), star: loadFx("star_04") };
+  const sizeFactor = { glow: 3.2, star: 4.5 };
   const pool = Array.from({ length: 300 }, () => {
-    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true }));
-    mesh.visible = false;
-    scene.add(mesh);
-    return { mesh, vel: new THREE.Vector3(), life: 0, max: 1, size: 1 };
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    sprite.visible = false;
+    scene.add(sprite);
+    return { sprite, vel: new THREE.Vector3(), life: 0, max: 1, size: 1, kind: "glow" as keyof typeof textures };
   });
 
   return {
-    emit(pos: THREE.Vector3, color: THREE.ColorRepresentation, vel: THREE.Vector3, life: number, size: number) {
+    emit(
+      pos: THREE.Vector3, color: THREE.ColorRepresentation, vel: THREE.Vector3,
+      life: number, size: number, kind: keyof typeof textures = "glow",
+    ) {
       const p = pool.find((q) => q.life <= 0);
       if (!p) { return; }
-      p.mesh.position.copy(pos);
-      (p.mesh.material as THREE.MeshBasicMaterial).color.set(color);
+      p.sprite.position.copy(pos);
+      p.sprite.material.map = textures[kind];
+      p.sprite.material.color.set(color);
       p.vel.copy(vel);
       p.life = p.max = life;
       p.size = size;
-      p.mesh.visible = true;
+      p.kind = kind;
+      p.sprite.visible = true;
     },
     update(dt: number) {
       for (const p of pool) {
         if (p.life <= 0) { continue; }
         p.life -= dt;
-        if (p.life <= 0) { p.mesh.visible = false; continue; }
+        if (p.life <= 0) { p.sprite.visible = false; continue; }
         const k = p.life / p.max;
-        p.mesh.position.addScaledVector(p.vel, dt);
-        p.mesh.scale.setScalar(p.size * k);
-        (p.mesh.material as THREE.MeshBasicMaterial).opacity = k;
+        p.sprite.position.addScaledVector(p.vel, dt);
+        p.sprite.scale.setScalar(p.size * sizeFactor[p.kind] * (0.4 + 0.6 * k));
+        p.sprite.material.opacity = k;
       }
     },
   };
@@ -429,8 +447,17 @@ export function createFullscreen() {
   const root = document.documentElement;
   const btn = document.getElementById("fs");
   const phoneMq = matchMedia("(max-width: 700px), (max-height: 520px)");
+  const tipEl = document.getElementById("fsTip");
 
-  if (!root.requestFullscreen) { btn?.setAttribute("hidden", ""); }
+  // Opened from the home screen the page already has the whole screen.
+  const installed = matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches
+    || (navigator as { standalone?: boolean }).standalone === true;
+  if (installed) { btn?.setAttribute("hidden", ""); }
+
+  // Browsers that can't go full screen (iPhone, in-app browsers) get a tip on
+  // how to install the page to the home screen, which opens with nothing around it.
+  const showTip = () => { if (tipEl) { tipEl.hidden = false; } };
+  document.getElementById("fsTipClose")?.addEventListener("click", () => { if (tipEl) { tipEl.hidden = true; } });
 
   const sync = () => {
     const full = !!document.fullscreenElement;
@@ -441,7 +468,8 @@ export function createFullscreen() {
   };
   const toggle = () => {
     if (document.fullscreenElement) { void document.exitFullscreen(); }
-    else { root.requestFullscreen?.().catch(() => { /* refused: stay windowed */ }); }
+    else if (root.requestFullscreen) { root.requestFullscreen().catch(showTip); }
+    else { showTip(); }
   };
 
   btn?.addEventListener("click", toggle);
