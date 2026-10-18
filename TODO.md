@@ -17,13 +17,19 @@ Workflow note: changes are only pushed when asked ("push").
 
 ## Next up
 
-- **Hex-A-Gone mode for Voidfall** (the Fall Guys game: tiles break after you step on them, several floors, last one standing wins).
-  - 3 floors about 120 units apart; falling through a gap lands you on the next floor, or you are out if there is no tile there.
-  - Each tile has its own break time, shown by colour (for example green ~2s, yellow ~1.2s, red ~0.5s), random per round, faster on the lower floors.
-  - A mode that rotates into Voidfall; classic Voidfall stays.
-  - Start with square tiles (the grid already is); hexagons are a later visual swap.
-  - Risks: seeing the lower floors (fade the floor above a player beneath it), jump and landing prediction across floors, three times the tiles on phones (draw them as one batch).
-  - Estimate: 2 to 3 days, then playtest on phones.
+- **Bots for Hex-A-Gone**: they sit those rounds out today, which is why the mode needs two humans. Bots that read tile colours, choose between floors and drop down on purpose.
+- Tune Hex-A-Gone after playing it (the break times, the colour mix per floor, the 75 second sudden death, the fade radius). The numbers are in `src/shared/void.ts`.
+- Hexagon tiles instead of squares (a visual swap: the tile grid stays square).
+
+## Hex-A-Gone (2026-10-18, not pushed, not yet seen on a real phone)
+
+- A Voidfall mode that takes turns with classic each round (a private room's host can lock one in the lobby). Needs 2 or more humans in a public room; bots sit it out and are hidden from the name list.
+- Three full floors 120 units apart (243 tiles). Fall through a gap onto the floor below, or out if there is no tile. Each tile has a kind (green about 2s, yellow about 1.2s, red about 0.5s at the top; the middle floor is 15% faster and the bottom 30%), dealt at random each round and sent to the phones; the nine tiles under the start ring are never red. Cracking tiles flash white and shake, red tiles also have stripes.
+- You see lower floors because the floors above fade (a see-through dither, so they stay opaque and in the right order) in a circle of 260 units around you, and the camera follows your floor.
+- Sudden death after 75 seconds: one random solid tile cracks every second, down to four a second, on a floor somebody is on.
+- Voidfall now has an intro card, a round banner and the Cube Tag winner card with the next mode and its rules, Ready (up to 15 seconds), Share and Exit. The OUT lamp sits beside the names.
+- Drawn as four instanced meshes (22 to 52 draw calls in total, about 42,000 triangles, mostly the thick glowing frames). Shared physics in `src/shared/void.ts`: floors, landing that cannot skip a floor, steering that stays full on a lower floor.
+- 11 new tests (physics, tile kinds, sudden death, rotation, bots sitting out, Ready, a 20-round long run); 64 tests in all.
 
 ## Built, not yet pushed or checked on a phone (2026-10-18)
 
@@ -59,7 +65,6 @@ Workflow note: changes are only pushed when asked ("push").
 ## Ideas to consider
 
 - Temporary power-ups (for example a speed boost or a shield for a few seconds).
-- Hex-A-Gone: design grilled up to round 1 (see the memory note); resume at round 2. Voidfall bots now exist, so the 2-player minimum no longer leaves a lone player waiting, and Hex-A-Gone bots would need to handle several floors.
 
 ## From the research report (`reports/Rift Arcade improvement roadmap.md`)
 

@@ -75,7 +75,6 @@
             <button id="mute" class="mute" type="button" aria-label="Sound on or off" aria-pressed="false">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3z" /><path class="waves" d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" /><path class="x" d="M16 9l5 6m0-6l-5 6" /></svg>
             </button>
-            <span class="lamp" id="itLamp" aria-hidden="true">OUT</span>
           </span>
         </header>
 
@@ -91,6 +90,9 @@
               <label class="lobby__field">Your name
                 <input id="nameInput" maxlength="12" autocomplete="nickname" spellcheck="false" />
               </label>
+              <label class="lobby__field">Game mode for your own room
+                <select id="modeSelect"><option value="">Take turns every round</option></select>
+              </label>
               <button class="lbtn lbtn--pink" type="submit" value="quick">Quick play</button>
               <button class="lbtn lbtn--cyan" type="submit" value="create">Create private room</button>
               <div class="lobby__join">
@@ -105,8 +107,37 @@
               <p><b>iPhone:</b> tap Share, then Add to Home Screen.<br /><b>Android:</b> open the browser menu, then Add to Home screen or Install app.</p>
               <button id="fsTipClose" class="lbtn lbtn--pink" type="button">Got it</button>
             </div>
+            <div id="intro" class="intro" role="dialog" aria-labelledby="introTitle" hidden>
+              <p class="intro__label">How this room plays</p>
+              <p id="introTitle" class="intro__title"></p>
+              <p id="introRules" class="intro__text"></p>
+              <p id="introControls" class="intro__text intro__text--small"></p>
+              <button id="introClose" class="lbtn lbtn--pink" type="button">Got it</button>
+            </div>
+            <div id="modeBanner" class="modebanner" role="status" hidden>
+              <p id="modeName" class="modebanner__name"></p>
+              <p id="modeBlurb" class="modebanner__blurb"></p>
+            </div>
+            <div id="roundEnd" class="roundend" role="status" hidden>
+              <p class="roundend__label">Round over</p>
+              <p id="roundWinner" class="roundend__winner"></p>
+              <p id="roundNext" class="roundend__next"></p>
+              <p id="roundRules" class="roundend__rules"></p>
+              <div class="roundend__row">
+                <span id="roundCount" class="roundend__count">15</span>
+                <button id="roundReady" class="lbtn lbtn--pink" type="button">Ready</button>
+              </div>
+              <p id="roundReadyCount" class="roundend__next"></p>
+              <div class="roundend__row">
+                <button id="roundShare" class="lbtn" type="button">Share</button>
+                <a id="roundExit" class="lbtn lbtn--cyan" href="/">Exit</a>
+              </div>
+            </div>
             <p id="status" role="status"></p>
-            <div id="board"></div>
+            <div class="hudright">
+              <span class="lamp" id="itLamp" aria-hidden="true">OUT</span>
+              <div id="board"></div>
+            </div>
           </div>
         </div>
 
@@ -117,7 +148,7 @@
 
         <section class="placard">
           <h2>HOW TO PLAY</h2>
-          <p>Every tile cracks the moment you land on it and drops away a second later, so keep moving. Steer with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, the arrow keys, or the joystick, and hop across gaps with <kbd>SPACE</kbd> or the JUMP button. Last player standing wins. To play with friends, create a private room and tap the ROOM code to share the invite link, or tell them the 4-letter code.</p>
+          <p>Every tile cracks the moment you land on it and drops away, so keep moving. Rounds take turns between two modes: classic Voidfall (one floor, every tile drops a second after you land) and Hex-A-Gone (three floors where each tile breaks at its own speed: green lasts, yellow is quicker, red goes almost at once, and a tile that is cracking flashes white; fall through a gap and you land on the floor below, or you are out if there is no tile there; the floors above you fade away so you can see where you are going). Hex-A-Gone needs at least two people in the room. Steer with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, the arrow keys, or the joystick, and hop across gaps with <kbd>SPACE</kbd> or the JUMP button. Last player standing wins. To play with friends, create a private room and tap the ROOM code to share the invite link, or tell them the 4-letter code.</p>
         </section>
         <div class="cab__base"></div>
       </div>

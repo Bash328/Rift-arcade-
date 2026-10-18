@@ -5,7 +5,10 @@ import { ColyseusTestServer, boot } from "@colyseus/testing";
 import appConfig from "../src/app.config.js";
 import { MyRoomState, type MoveInput } from "../src/rooms/schema/MyRoomState.js";
 import { stepEntity } from "../src/shared/movement.js";
-import { stepVoidEntity, tileAt, GRID, GONE, SOLID, CRACKING } from "../src/shared/void.js";
+import {
+  stepVoidEntity, tileAt, GRID, CELLS, GONE, SOLID, CRACKING, HEX_FLOORS, RED, GREEN, floorZ, fallLimit, dealKinds, breakTime, suddenDeathGap, tileUnder, SUDDEN_DEATH_AT,
+} from "../src/shared/void.js";
+import { voidModeOf } from "../src/shared/voidModes.js";
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
 import { PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
 import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
@@ -809,12 +812,13 @@ describe("testing your Colyseus app", () => {
 
   it("Voidfall with bots: 40 rounds, every one ends, nothing goes wrong, bots are topped up", async () => {
     const room = await colyseus.createRoom<any>("void_room", {});
-    await colyseus.connectTo(room, { name: "Ann" });
+    const ann = await colyseus.connectTo(room, { name: "Ann" });
     const step = () => (room as any).step({ dt: 1 / 30 });
     let rounds = 0, phaseTime = 0, lastPhase = "";
-    for (let i = 0; i < 30 * 1500 && rounds < 40; i++) {
+    for (let i = 0; i < 30 * 3000 && rounds < 40; i++) {
       step();
       const s = room.state;
+      if (s.phase === "over" && (room as any).phaseClock > 10) { ann.send("ready"); (room as any).phaseClock = 10; } // Ready, so the winner card does not wait out its 15 seconds
       if (s.phase !== lastPhase) { if (lastPhase === "playing") { rounds++; } lastPhase = s.phase; phaseTime = 0; }
       phaseTime += 1 / 30;
       assert.ok(!(s.phase === "playing" && phaseTime > 120), "a round is stuck");
@@ -832,7 +836,8 @@ describe("testing your Colyseus app", () => {
     const b = await colyseus.connectTo(room, { name: "Bo" });
     assert.strictEqual(room.state.players.get(b.sessionId).alive, false, "a mid-round joiner watches");
     for (let i = 0; i < 3000 && room.state.phase !== "over"; i++) { step(); }
-    for (let i = 0; i < 200; i++) { step(); }
+    for (let i = 0; i < 700 && room.state.phase === "over"; i++) { step(); } // the winner card waits (up to 15 s) for Ready
+    for (let i = 0; i < 100; i++) { step(); }
     assert.strictEqual(room.state.players.get(b.sessionId).alive, true, "Bo plays the next round");
     assert.strictEqual([...room.state.players.values()].filter((p: any) => p.name.startsWith("BOT")).length, 3, "three bots for two humans");
     await a.leave(); await b.leave();
@@ -844,12 +849,226 @@ describe("testing your Colyseus app", () => {
     const room = await colyseus.createRoom<any>("void_room", {});
     await colyseus.connectTo(room, { name: "Ann" });
     const step = () => (room as any).step({ dt: 1 / 30 });
-    for (let i = 0; i < 4000 && room.state.phase !== "over"; i++) { step(); }
-    assert.strictEqual(room.state.phase, "over");
-    const winner = [...room.state.players.values()].find((p: any) => p.alive)!;
+    // A round whose last two players fall together has nobody left standing: go again until someone survives.
+    let winner: any;
+    for (let attempt = 0; attempt < 6 && !winner; attempt++) {
+      for (let i = 0; i < 4000 && room.state.phase !== "over"; i++) { step(); }
+      assert.strictEqual(room.state.phase, "over");
+      winner = [...room.state.players.values()].find((p: any) => p.alive);
+      if (!winner) { (room as any).phaseClock = 0.001; for (let i = 0; i < 5; i++) { step(); } }
+    }
+    assert.ok(winner, "a round ended with a survivor");
     const spot = [winner.x, winner.y];
     await colyseus.connectTo(room, { name: "Bo" });
     for (let i = 0; i < 100 && room.state.phase === "over"; i++) { step(); }
     if (room.state.phase === "over") { assert.deepStrictEqual([winner.x, winner.y], spot, "the winner stayed where they were"); }
+  });
+
+  // ---------------- Hex-A-Gone
+  const hexTiles = (fill = SOLID) => new Array<number>(CELLS * HEX_FLOORS).fill(fill);
+  const standing = (x = 450, y = 450, z = 0) => ({ x, y, vx: 0, vy: 0, z, vz: 0 });
+  const IDLE = { moveX: 0, moveY: 0, jump: 0 };
+
+  it("Hex-A-Gone physics: a gap drops you onto the floor below, or out if there is no tile there", () => {
+    const cell = tileAt(450, 450);
+    // A tile below the gap: fall from floor 0 and land on floor 1.
+    const tiles = hexTiles();
+    tiles[cell] = GONE;
+    const p = standing();
+    for (let i = 0; i < 60; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
+    assert.strictEqual(p.z, floorZ(1), "landed on floor 1");
+    assert.strictEqual(p.vz, 0);
+    assert.strictEqual(tileUnder(p, tiles), CELLS + cell, "standing on the floor 1 tile");
+    // No tile on floor 1 either: on to floor 2.
+    tiles[CELLS + cell] = GONE;
+    for (let i = 0; i < 60; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
+    assert.strictEqual(p.z, floorZ(2), "landed on floor 2");
+    // Nothing anywhere below: falls past the limit.
+    tiles[2 * CELLS + cell] = GONE;
+    for (let i = 0; i < 120; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
+    assert.ok(p.z < fallLimit(HEX_FLOORS), "out, below the fall limit (" + p.z.toFixed(0) + ")");
+  });
+
+  it("Hex-A-Gone physics: a fast fall cannot skip a floor, and steering is full on a lower floor but weak in the air", () => {
+    const tiles = hexTiles();
+    const cell = tileAt(450, 450);
+    tiles[cell] = GONE; // only floor 0 is open here
+    const p = standing(450, 450, 0);
+    p.vz = -5000; // far faster than any real fall: one tick covers more than a whole floor gap
+    stepVoidEntity(p, IDLE, 1 / 30, tiles);
+    assert.strictEqual(p.z, floorZ(1), "caught by floor 1 even at that speed");
+    // On floor 1 you steer at full speed.
+    const onLower = standing(450, 450, floorZ(1));
+    stepVoidEntity(onLower, { moveX: 1, moveY: 0, jump: 0 }, 1 / 30, tiles);
+    assert.ok(Math.abs(onLower.vx - PLAYER_SPEED) < 1, "full steering standing on floor 1 (" + onLower.vx + ")");
+    // Between floors, falling, you do not.
+    const faller = standing(450, 450, -60);
+    faller.vz = -200;
+    stepVoidEntity(faller, { moveX: 1, moveY: 0, jump: 0 }, 1 / 30, tiles);
+    assert.ok(faller.vx < PLAYER_SPEED * 0.5, "weak steering while falling (" + faller.vx + ")");
+  });
+
+  it("Hex-A-Gone physics: a jump from a lower floor cannot reach the floor above", () => {
+    const tiles = hexTiles();
+    const p = standing(450, 450, floorZ(1));
+    let highest = p.z;
+    for (let i = 0; i < 40; i++) { stepVoidEntity(p, { moveX: 0, moveY: 0, jump: i === 0 ? 1 : 0 }, 1 / 30, tiles); highest = Math.max(highest, p.z); }
+    assert.ok(highest > floorZ(1) + 40, "it did jump");
+    assert.ok(highest < floorZ(0), "but stayed below the floor above (" + highest.toFixed(0) + ")");
+    assert.strictEqual(p.z, floorZ(1), "and landed back on floor 1");
+  });
+
+  it("Hex-A-Gone tiles: 243 kinds, never red in the middle of the top floor, a nastier mix lower down, faster breaks lower down", () => {
+    const share = (floor: number, kind: number, deals: number[][]) =>
+      deals.reduce((n, d) => n + d.slice(floor * CELLS, (floor + 1) * CELLS).filter((k) => k === kind).length, 0) / (deals.length * CELLS);
+    const deals = Array.from({ length: 200 }, () => dealKinds());
+    assert.strictEqual(deals[0].length, CELLS * HEX_FLOORS);
+    for (const deal of deals) {
+      for (const j of [3, 4, 5]) { for (const i of [3, 4, 5]) { assert.notStrictEqual(deal[j * GRID + i], RED, "no red under the start ring"); } }
+    }
+    const red = [0, 1, 2].map((f) => share(f, RED, deals));
+    assert.ok(red[0] < red[1] && red[1] < red[2], "more red lower down: " + red.map((r) => r.toFixed(2)).join(", "));
+    assert.ok(Math.abs(red[2] - 0.35) < 0.05 && Math.abs(red[1] - 0.2) < 0.05, "close to the planned mix");
+    assert.strictEqual(breakTime(0, GREEN), 2);
+    assert.ok(breakTime(2, RED) < breakTime(0, RED) && breakTime(2, GREEN) < breakTime(1, GREEN) && breakTime(1, GREEN) < breakTime(0, GREEN), "every floor down is faster");
+    assert.ok(breakTime(0, RED) < 0.6 && breakTime(0, GREEN) > 1.8, "red is almost at once, green lasts");
+  });
+
+  it("Hex-A-Gone sudden death: one crack a second at first, then faster, never faster than four a second", () => {
+    assert.strictEqual(suddenDeathGap(SUDDEN_DEATH_AT), 1);
+    assert.ok(Math.abs(suddenDeathGap(SUDDEN_DEATH_AT + 20) - 0.6) < 1e-9);
+    assert.strictEqual(suddenDeathGap(SUDDEN_DEATH_AT + 500), 0.25);
+  });
+
+  it("Hex-A-Gone round: 243 tiles with a kind each, tiles break at their own speed, the room can be locked to it", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", { private: true, mode: "hex" });
+    assert.strictEqual(room.state.mode, "hex");
+    assert.ok(room.state.modeLocked);
+    assert.strictEqual(room.state.tiles.length, CELLS * HEX_FLOORS);
+    assert.strictEqual(room.state.kinds.length, CELLS * HEX_FLOORS);
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    await colyseus.connectTo(room, { name: "Bo" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    for (let i = 0; i < 300 && room.state.phase !== "playing"; i++) { step(); }
+    assert.strictEqual(room.state.phase, "playing");
+    const me = room.state.players.get(a.sessionId)!;
+    for (let i = 0; i < 3; i++) { step(); }
+    const idx = tileUnder(me, room.state.tiles);
+    assert.ok(idx >= 0 && idx < CELLS, "Ann is standing on a top-floor tile");
+    assert.strictEqual(room.state.tiles[idx], CRACKING, "it started cracking");
+    const expected = breakTime(0, room.state.kinds[idx]);
+    const left = ((room as any).crack as number[])[idx];
+    assert.ok(left <= expected && left > expected - 0.2, "it breaks in its own " + expected + "s (" + left.toFixed(2) + " left)");
+  });
+
+  it("Hex-A-Gone sudden death cracks a tile on a floor someone is on", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", { private: true, mode: "hex" });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const b = await colyseus.connectTo(room, { name: "Bo" });
+    const me = room.state.players.get(a.sessionId)!;
+    Object.assign(me, { z: floorZ(2) }); // Ann is on the bottom floor
+    room.state.players.get(b.sessionId)!.alive = false; // and Bo is out, so hers is the only floor in play
+    const before = [...room.state.tiles].filter((v) => v === CRACKING).length;
+    for (let i = 0; i < 20; i++) { (room as any).crackRandomTile(); }
+    const cracked: number[] = [];
+    room.state.tiles.forEach((v, i) => { if (v === CRACKING) { cracked.push(Math.floor(i / CELLS)); } });
+    assert.ok(cracked.length > before, "tiles started cracking");
+    assert.ok(cracked.every((f) => f === 2), "all on the floor Ann is on");
+  });
+
+  it("Voidfall modes take turns, but Hex-A-Gone needs two humans; a locked room keeps its mode", async () => {
+    const lone = await colyseus.createRoom<VoidState>("void_room", {});
+    await colyseus.connectTo(lone, { name: "Ann" });
+    lone.state.phase = "playing";
+    (lone as any).finish(undefined);
+    assert.strictEqual(lone.state.nextMode, "classic", "one human: still classic");
+
+    const pair = await colyseus.createRoom<VoidState>("void_room", {});
+    await colyseus.connectTo(pair, { name: "Ann" });
+    await colyseus.connectTo(pair, { name: "Bo" });
+    const seen: string[] = [pair.state.mode];
+    for (let r = 0; r < 4; r++) {
+      pair.state.phase = "playing";
+      (pair as any).finish(undefined);
+      (pair as any).phaseClock = 0.001;
+      (pair as any).step({ dt: 1 / 30 });
+      seen.push(pair.state.mode);
+    }
+    assert.deepStrictEqual(seen, ["classic", "hex", "classic", "hex", "classic"], "they take turns");
+    assert.strictEqual(pair.state.tiles.length, CELLS, "back to one floor");
+    assert.strictEqual(pair.state.kinds.length, 0, "and no kinds");
+
+    const locked = await colyseus.createRoom<VoidState>("void_room", { private: true, mode: "classic" });
+    await colyseus.connectTo(locked, { name: "Ann" });
+    locked.state.phase = "playing";
+    (locked as any).finish(undefined);
+    assert.strictEqual(locked.state.nextMode, "classic", "a locked room keeps its mode");
+  });
+
+  it("Hex-A-Gone: bots sit the round out and rejoin the next classic round", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", {});
+    await colyseus.connectTo(room, { name: "Ann" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    const bots = () => [...room.state.players.values()].filter((p) => p.name.startsWith("BOT "));
+    for (let i = 0; i < 3000 && bots().length < 4; i++) { step(); } // bots arrive while Ann is alone
+    await colyseus.connectTo(room, { name: "Bo" });
+    for (let i = 0; i < 30 && bots().length > 3; i++) { step(); }
+    assert.strictEqual(bots().length, 3, "three bots with two humans");
+    room.state.nextMode = "hex";
+    (room as any).newRound();
+    assert.strictEqual(room.state.mode, "hex");
+    assert.ok(bots().every((b) => !b.alive), "bots are out for Hex-A-Gone");
+    room.state.nextMode = "classic";
+    (room as any).newRound();
+    assert.strictEqual(room.state.mode, "classic");
+    assert.ok(bots().every((b) => b.alive), "and back for classic");
+    // A human leaving mid-way: a hex round that cannot be played by one human becomes classic.
+    room.state.nextMode = "hex";
+    (room as any).newRound();
+    assert.strictEqual(room.state.mode, "hex");
+    room.state.players.delete([...room.state.players.entries()].find(([, p]) => p.name === "Bo")![0]);
+    for (let i = 0; i < 5; i++) { step(); }
+    assert.strictEqual(room.state.mode, "classic", "one human left: classic again");
+  });
+
+  it("Voidfall ready: the winner card waits for Ready and starts the next round as soon as everyone has pressed it", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", { private: true });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const b = await colyseus.connectTo(room, { name: "Bo" });
+    room.state.phase = "playing";
+    (room as any).finish(undefined);
+    assert.ok(room.state.nextIn > 5, "a real wait (" + room.state.nextIn + "s)");
+    a.send("ready");
+    for (let i = 0; i < 4; i++) { await room.waitForNextTimestep(); }
+    assert.ok(!room.state.players.get(a.sessionId)!.ready, "a tap in the first moments is ignored");
+    (room as any).phaseClock = 10;
+    a.send("ready");
+    for (let i = 0; i < 4; i++) { await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.phase, "over", "it waits for Bo");
+    b.send("ready");
+    for (let i = 0; i < 6 && room.state.phase === "over"; i++) { await room.waitForNextTimestep(); }
+    assert.notStrictEqual(room.state.phase, "over", "both ready: the next round begins");
+    assert.strictEqual(room.state.round, 2);
+  });
+
+  it("Hex-A-Gone long run: a public room with two humans alternates modes for 20 rounds and every round ends", async () => {
+    const room = await colyseus.createRoom<any>("void_room", {});
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const b = await colyseus.connectTo(room, { name: "Bo" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    let rounds = 0, lastPhase = "", phaseTime = 0;
+    const modes = new Set<string>();
+    for (let i = 0; i < 30 * 3000 && rounds < 20; i++) {
+      step();
+      const s = room.state;
+      if (s.phase === "over" && (room as any).phaseClock > 10) { a.send("ready"); b.send("ready"); (room as any).phaseClock = 10; }
+      if (s.phase !== lastPhase) { if (lastPhase === "playing") { rounds++; modes.add(s.mode); } lastPhase = s.phase; phaseTime = 0; }
+      phaseTime += 1 / 30;
+      assert.ok(!(s.phase === "playing" && phaseTime > 150), "a round is stuck (" + s.mode + ")");
+      assert.strictEqual(s.tiles.length, voidModeOf(s.mode).floors * CELLS, "tiles match the mode");
+      for (const [id, p] of s.players) { assert.ok([p.x, p.y, p.z, p.vz].every(Number.isFinite), id + " has a bad number"); }
+    }
+    assert.strictEqual(rounds, 20, "20 rounds finished");
+    assert.ok(modes.has("classic") && modes.has("hex"), "both modes were played");
   });
 });

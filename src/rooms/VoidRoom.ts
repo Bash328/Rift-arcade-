@@ -4,13 +4,14 @@ import { MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { InputPacer } from "./inputPacing.js";
 import { sanitizeName } from "../shared/names.js";
-import { TICK_RATE, PETS, BOT_NAMES } from "../shared/constants.js";
+import { TICK_RATE, PETS, BOT_NAMES, ROUND_END_PAUSE, READY_LOCK } from "../shared/constants.js";
 import {
-  GRID, TILE, VOID_SIZE, SOLID, CRACKING, GONE, CRACK_TIME, FALL_LIMIT, LAND_GRACE, tileAt, stepVoidEntity, type VoidInput,
+  GRID, TILE, CELLS, VOID_SIZE, SOLID, CRACKING, GONE, CRACK_TIME, LAND_GRACE, FLOOR_GAP, SUDDEN_DEATH_AT,
+  tileAt, tileUnder, floorsOf, fallLimit, dealKinds, breakTime, suddenDeathGap, stepVoidEntity, type VoidInput,
 } from "../shared/void.js";
+import { VOID_MODES, voidModeOf } from "../shared/voidModes.js";
 
 const COUNTDOWN = 5;
-const OVER_PAUSE = 5;
 const QUIET_TICKS = 6;
 const IDLE = { moveX: 0, moveY: 0, jump: 0 };
 
@@ -44,6 +45,9 @@ interface BotBrain {
 /**
  * Voidfall: everyone stands on a grid of tiles. A tile cracks the moment someone
  * lands on it and drops away 1.2s later. Last player standing wins.
+ *
+ * Modes (see shared/voidModes.ts) take turns, one per round: classic is one floor with every tile breaking in 1.2s;
+ * Hex-A-Gone is three floors where each tile breaks at its own speed, shown by colour.
  */
 export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
@@ -58,7 +62,16 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
 
   private joinCount = 0;
   private phaseClock = 0;
-  private crack = new Array<number>(GRID * GRID).fill(0);
+  /** Seconds left before each cracking tile drops, and how long each tile takes to break once landed on (both per tile of the current mode). */
+  private crack: number[] = [];
+  private breakAt: number[] = [];
+  /** Seconds into the round, and the time to the next tile sudden death cracks. */
+  private playClock = 0;
+  private deathClock = 0;
+  /** The mode the host locked for this room, if any. */
+  private lockedMode: string | undefined;
+  /** Players whose connection dropped and whose seat is held: the next round does not wait for their Ready. */
+  private away = new Set<string>();
   /** Session ids in the order they fell, so the last one out can win a tie. */
   private fell: string[] = [];
   /** Consecutive ticks each player has sent no input. */
@@ -69,13 +82,26 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private botWait = 0;
   private isPrivate = false;
 
+  messages = {
+    /** "Ready" on the winner card: the next round starts as soon as every player has pressed it (or the wait runs out). */
+    ready: (client: Client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (player && this.state.phase === "over" && this.phaseClock <= ROUND_END_PAUSE - READY_LOCK) { player.ready = true; }
+    },
+  };
+
   async onCreate(options: any) {
     assertRoomCapacity();
     // The room id doubles as the invite code. Private rooms skip quick-play matchmaking.
     this.roomId = await freeRoomCode();
     this.isPrivate = !!options?.private;
     if (this.isPrivate) { await this.setPrivate(true); }
-    for (let i = 0; i < GRID * GRID; i++) { this.state.tiles.push(SOLID); }
+    // The host of a private room can lock one mode; otherwise the modes take turns, starting with classic.
+    this.lockedMode = VOID_MODES.some((m) => m.id === options?.mode) ? options.mode : undefined;
+    this.state.modeLocked = !!this.lockedMode;
+    this.setupMode(this.lockedMode ?? "classic");
+    this.state.nextMode = this.state.mode;
+    this.state.round = 1;
     this.state.phase = "waiting";
     this.setPatchRate(1000 / TICK_RATE);
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
@@ -91,16 +117,23 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
       hue: (n * 137.5 + 200) % 360,
       pet: n % PETS.length,
       alive: !inRound,
+      ready: false,
     }));
     if (this.state.phase === "waiting" || this.state.phase === "countdown") { this.spread(); } // not while the winner is celebrating
   }
 
   /** A refresh or network blip: hold the seat for 30s so the player can resume as the same character. */
   onDrop(client: Client) {
+    this.away.add(client.sessionId);
     this.allowReconnection(client, 30).catch(() => {}); // rejects only when the room is already closing
   }
 
+  onReconnect(client: Client) {
+    this.away.delete(client.sessionId);
+  }
+
   onLeave(client: Client) {
+    this.away.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.quiet.delete(client.sessionId);
     this.pacers.delete(client.sessionId);
@@ -132,7 +165,8 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
       name: `BOT ${BOT_NAMES[n % BOT_NAMES.length]}`,
       hue: (slot * 137.5 + 200) % 360,
       pet: slot % PETS.length,
-      alive: true,
+      alive: !this.botsSitOut(),
+      ready: this.state.phase === "over",
     }));
     let roll = Math.random();
     const skill = SKILL_ODDS.findIndex((odds) => (roll -= odds) < 0);
@@ -237,6 +271,41 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     return this.botCommand(bot, brain, 0);
   }
 
+  /** Bots only know how to play one floor, so they sit a Hex-A-Gone round out (they are listed as out and rejoin the next classic round). */
+  private botsSitOut() { return this.state.mode === "hex"; }
+
+  private humans() { return this.state.players.size - this.bots.size; }
+
+  /** Players who can actually take part in the round now. */
+  private contenders() { return this.state.players.size - (this.botsSitOut() ? this.bots.size : 0); }
+
+  /**
+   * Lay out the tiles for a mode: one floor of 81 for classic, three of 81 for Hex-A-Gone with a kind dealt to each
+   * tile (and so a break time). Done between rounds, so the clients see the array change size with the new mode.
+   */
+  private setupMode(id: string) {
+    const s = this.state;
+    const mode = voidModeOf(id);
+    const count = mode.floors * CELLS;
+    s.mode = mode.id;
+    s.tiles.clear();
+    s.kinds.clear();
+    for (let i = 0; i < count; i++) { s.tiles.push(SOLID); }
+    this.breakAt = new Array<number>(count).fill(CRACK_TIME);
+    if (mode.floors > 1) {
+      dealKinds().forEach((kind, i) => { s.kinds.push(kind); this.breakAt[i] = breakTime(Math.floor(i / CELLS), kind); });
+    }
+    this.crack = new Array<number>(count).fill(0);
+    for (const [botId] of this.bots) { const bot = s.players.get(botId); if (bot) { bot.alive = !this.botsSitOut(); } }
+  }
+
+  /** The mode after this one: they take turns, but Hex-A-Gone needs enough humans (bots cannot play it). A host's lock wins. */
+  private pickMode(): string {
+    if (this.lockedMode) { return this.lockedMode; }
+    const next = this.state.mode === "classic" ? "hex" : "classic";
+    return voidModeOf(next).minHumans > this.humans() ? "classic" : next;
+  }
+
   /** Put every living player on an even ring around the middle of the grid. */
   private spread() {
     const players = [...this.state.players.values()].filter((p) => p.alive);
@@ -279,11 +348,13 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     switch (s.phase) {
       case "waiting":
         this.recoverStragglers();
-        if (s.players.size >= 2) { s.phase = "countdown"; this.phaseClock = COUNTDOWN; s.countdown = COUNTDOWN; }
+        // Players left since the last round may not be enough for Hex-A-Gone: fall back to classic.
+        if (!this.lockedMode && voidModeOf(s.mode).minHumans > this.humans()) { this.setupMode("classic"); s.nextMode = "classic"; this.spread(); }
+        if (this.contenders() >= 2) { s.phase = "countdown"; this.phaseClock = COUNTDOWN; s.countdown = COUNTDOWN; }
         break;
       case "countdown":
         this.recoverStragglers();
-        if (s.players.size < 2) { s.phase = "waiting"; break; }
+        if (this.contenders() < 2) { s.phase = "waiting"; break; }
         this.phaseClock -= ctx.dt;
         s.countdown = Math.max(Math.ceil(this.phaseClock), 0);
         if (this.phaseClock <= 0) { this.start(); }
@@ -293,6 +364,9 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
         break;
       case "over":
         this.phaseClock -= ctx.dt;
+        // Everyone ready (bots always are, and so is anyone whose connection dropped): no need to wait out the rest.
+        if (this.phaseClock > 0 && s.players.size > 0 && [...s.players].every(([id, p]) => p.ready || this.away.has(id))) { this.phaseClock = 0; }
+        s.nextIn = Math.max(0, Math.ceil(this.phaseClock));
         if (this.phaseClock <= 0) { this.newRound(); }
         break;
     }
@@ -300,12 +374,15 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
 
   /** Before the round starts, anyone who walks off the edge is put back. */
   private recoverStragglers() {
-    if ([...this.state.players.values()].some((p) => p.alive && p.z < FALL_LIMIT)) { this.spread(); }
+    const limit = fallLimit(floorsOf(this.state.tiles));
+    if ([...this.state.players.values()].some((p) => p.alive && p.z < limit)) { this.spread(); }
   }
 
   private start() {
     this.fell = [];
     this.crack.fill(0);
+    this.playClock = 0;
+    this.deathClock = 0;
     this.state.phase = "playing";
     this.state.alive = [...this.state.players.values()].filter((p) => p.alive).length;
   }
@@ -313,11 +390,11 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private play(dt: number) {
     const s = this.state;
 
-    // A tile cracks the moment someone is standing on it...
+    // A tile cracks the moment someone is standing on it (on whichever floor)...
     for (const p of s.players.values()) {
-      if (!p.alive || p.z !== 0) { continue; }
-      const idx = tileAt(p.x, p.y);
-      if (idx >= 0 && s.tiles[idx] === SOLID) { s.tiles[idx] = CRACKING; this.crack[idx] = CRACK_TIME; }
+      if (!p.alive) { continue; }
+      const idx = tileUnder(p, s.tiles);
+      if (idx >= 0 && s.tiles[idx] === SOLID) { s.tiles[idx] = CRACKING; this.crack[idx] = this.breakAt[idx]; }
     }
     // ...and drops once its timer runs out.
     for (let i = 0; i < s.tiles.length; i++) {
@@ -326,12 +403,41 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
       if (this.crack[i] <= 0) { s.tiles[i] = GONE; }
     }
 
+    // Sudden death: after a while tiles start cracking on their own, faster and faster, so a round cannot drag on.
+    this.playClock += dt;
+    if (s.mode === "hex" && this.playClock >= SUDDEN_DEATH_AT) {
+      this.deathClock -= dt;
+      if (this.deathClock <= 0) {
+        this.crackRandomTile();
+        this.deathClock = suddenDeathGap(this.playClock);
+      }
+    }
+
+    const limit = fallLimit(floorsOf(s.tiles));
     for (const [sessionId, p] of s.players) {
-      if (p.alive && p.z < FALL_LIMIT) { p.alive = false; this.fell.push(sessionId); }
+      if (p.alive && p.z < limit) { p.alive = false; this.fell.push(sessionId); }
     }
     const standing = [...s.players.values()].filter((p) => p.alive);
     s.alive = standing.length;
     if (standing.length <= 1) { this.finish(standing[0]); }
+  }
+
+  /** Start a random solid tile cracking, on a floor somebody is on (any floor if everyone is in the air). */
+  private crackRandomTile() {
+    const s = this.state;
+    const floors = floorsOf(s.tiles);
+    const occupied = new Set<number>();
+    for (const p of s.players.values()) {
+      if (p.alive) { occupied.add(Math.min(floors - 1, Math.max(0, Math.round(-p.z / FLOOR_GAP)))); }
+    }
+    const solid: number[] = [];
+    for (let i = 0; i < s.tiles.length; i++) {
+      if (s.tiles[i] === SOLID && (occupied.size === 0 || occupied.has(Math.floor(i / CELLS)))) { solid.push(i); }
+    }
+    if (!solid.length) { return; }
+    const idx = solid[Math.floor(Math.random() * solid.length)];
+    s.tiles[idx] = CRACKING;
+    this.crack[idx] = this.breakAt[idx];
   }
 
   private finish(survivor?: VoidPlayer) {
@@ -339,16 +445,22 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     const lastOut = [...this.fell].reverse().map((id) => this.state.players.get(id)).find(Boolean);
     this.state.winner = (survivor ?? lastOut)?.name ?? "Nobody";
     this.state.phase = "over";
-    this.phaseClock = OVER_PAUSE;
+    this.phaseClock = ROUND_END_PAUSE;
+    this.state.nextIn = ROUND_END_PAUSE;
+    this.state.nextMode = this.pickMode();
+    for (const [id, p] of this.state.players) { p.ready = this.bots.has(id); }
   }
 
   private newRound() {
     const s = this.state;
-    for (let i = 0; i < s.tiles.length; i++) { s.tiles[i] = SOLID; }
-    this.crack.fill(0);
+    // The mode picked at the end of the last round may no longer have enough humans.
+    const mode = !this.lockedMode && voidModeOf(s.nextMode).minHumans > this.humans() ? "classic" : s.nextMode;
+    this.setupMode(mode);
     this.fell = [];
     s.winner = "";
-    for (const p of s.players.values()) { p.alive = true; }
+    s.nextIn = 0;
+    s.round++;
+    for (const [id, p] of s.players) { p.ready = false; p.alive = !(this.bots.has(id) && this.botsSitOut()); }
     this.spread();
     s.phase = "waiting";
   }

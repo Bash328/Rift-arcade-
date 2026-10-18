@@ -409,10 +409,11 @@ a.cab:focus-visible { outline-offset: 6px; border-radius: 26px; }
   pointer-events: none;
 }
 
-/* Cube Tag: the IT lamp sits right beside the names. */
+/* The IT lamp (Cube Tag) and the OUT lamp (Voidfall) sit right beside the names. */
 .hudright { position: absolute; inset: 0.6rem 0.8rem auto auto; z-index: 6; display: flex; align-items: flex-start; gap: 0.6rem; pointer-events: none; }
 .hudright #board { position: static; }
 .hudright .lamp { margin-top: 0.1rem; }
+.lobbying .hudright { visibility: hidden; } /* nothing to show until a game starts */
 
 #board {
   position: absolute;
@@ -695,10 +696,7 @@ button.btn {
 .immersive .marquee-right { display: contents; }
 .immersive .mute { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto calc(max(0.5rem, env(safe-area-inset-left)) + 2.9rem); background: #050109aa; pointer-events: auto; }
 .immersive .fsbtn { inset-inline-start: calc(max(0.5rem, env(safe-area-inset-left)) + 5.4rem); }
-/* Voidfall's OUT lamp joins the button row, left of the status text, so it never sits over the timer. */
-.immersive .marquee-right .lamp { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto calc(max(0.5rem, env(safe-area-inset-left)) + 7.9rem); }
 .immersive #status { inset: 0.7rem auto auto 9.2rem; max-width: 36%; }
-.immersive:has(.marquee-right .lamp) #status { inset-inline-start: 13.2rem; } /* room for the OUT lamp in the button row */
 .immersive .roomtag { inset: auto auto 0.6rem 50%; translate: -50% 0; }
 
 /* Controls on top of the screen: stick bottom-left, jump bottom-right. */

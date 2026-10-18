@@ -500,7 +500,8 @@ export function showRoomTag(room: { roomId: string }, gameName: string) {
 /**
  * Desktop keeps a fixed overview of the whole arena. A phone can't fit it, so
  * there the camera chases the player (clamped so it doesn't wander off the arena).
- * Call the returned function every frame with the player's world position.
+ * Call the returned function every frame with the player's world position, and `lift`: the height of the floor they
+ * stand on when the arena has several (the camera rises or sinks with it). Without a target, the whole arena.
  */
 /** Phone camera: height above and distance behind the player. */
 const PHONE_HEIGHT = 470;
@@ -525,19 +526,19 @@ export function createCameraRig(
   const look = overviewLook.clone();
 
   const offset = new THREE.Vector3();
-  const update = (target?: THREE.Vector3) => {
+  const update = (target?: THREE.Vector3, lift = 0) => {
     if (target) {
       const fx = Math.min(Math.max(target.x, view.bounds.minX), view.bounds.maxX);
       const fz = Math.min(Math.max(target.z, view.bounds.minZ), view.bounds.maxZ);
       if (followMq.matches) {
         // Phone: a close chase camera, a good way back so you can see who is near.
-        camGoal.set(fx, PHONE_HEIGHT, fz + PHONE_BEHIND);
-        lookGoal.set(fx, 0, fz);
+        camGoal.set(fx, PHONE_HEIGHT + lift, fz + PHONE_BEHIND);
+        lookGoal.set(fx, lift, fz);
       } else {
         // PC: closer than the whole-arena view, drifting only part of the way toward
         // you, so the screen stays calm but the pets are big enough to see.
         lookGoal.set(
-          view.look.x + (fx - view.look.x) * DESKTOP_FOLLOW, 0,
+          view.look.x + (fx - view.look.x) * DESKTOP_FOLLOW, lift,
           view.look.z + (fz - view.look.z) * DESKTOP_FOLLOW,
         );
         offset.copy(view.pos).sub(view.look).multiplyScalar(DESKTOP_ZOOM);
