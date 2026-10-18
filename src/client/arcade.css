@@ -698,7 +698,7 @@ button.btn {
 /* Voidfall's OUT lamp joins the button row, left of the status text, so it never sits over the timer. */
 .immersive .marquee-right .lamp { position: absolute; inset: max(0.5rem, env(safe-area-inset-top)) auto auto calc(max(0.5rem, env(safe-area-inset-left)) + 7.9rem); }
 .immersive #status { inset: 0.7rem auto auto 9.2rem; max-width: 36%; }
-.immersive:has(.marquee-right .lamp) #status { inset-inline-start: 11.4rem; } /* room for the lamp in the button row */
+.immersive:has(.marquee-right .lamp) #status { inset-inline-start: 13.2rem; } /* room for the OUT lamp in the button row */
 .immersive .roomtag { inset: auto auto 0.6rem 50%; translate: -50% 0; }
 
 /* Controls on top of the screen: stick bottom-left, jump bottom-right. */

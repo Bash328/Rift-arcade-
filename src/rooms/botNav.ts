@@ -85,20 +85,32 @@ export class Nav {
   /**
    * Where a runner should head: a cell it can reach well before the chaser, far from the chaser (credit stops at
    * 24 cells, so beyond that open ground wins over distance), with plenty of room around it so it is never a corner
-   * or a dead end. At least `minTravel` cells away, so a runner keeps moving instead of settling. Null if nothing qualifies.
+   * or a dead end. It is a real trip (`minTravel` cells or more, about 20 preferred) and not near `recent` goals, so a
+   * runner crosses the arena and does not circle one patch. Null if nothing qualifies.
    */
-  fleeGoal(fromBot: Int16Array, fromThreat: Int16Array, minTravel = 6): { x: number; y: number } | null {
+  fleeGoal(fromBot: Int16Array, fromThreat: Int16Array, recent: [number, number][] = [], minTravel = 10): { x: number; y: number } | null {
     let best = -Infinity, bestCell = -1;
     for (let i = 0; i < this.kind.length; i++) {
       const b = fromBot[i], t = fromThreat[i];
-      if (b < minTravel || t < 0 || this.kind[i] === WALL || b > 30 || b + 3 >= t) { continue; }
-      const score = Math.min(t, 24) - 0.25 * b + this.room[i] * 0.25 + Math.random() * 3;
+      if (b < minTravel || t < 0 || this.kind[i] === WALL || b > 45 || b + 3 >= t) { continue; }
+      const c = i % this.cols, r = (i - c) / this.cols;
+      let score = Math.min(t, 24) + this.room[i] * 0.25 - 0.08 * Math.abs(b - 20) + Math.random() * 2;
+      // Corners are traps: the closer to two walls at once, the worse (and a little worse along any wall).
+      const ex = Math.min(c, this.cols - 1 - c), ey = Math.min(r, this.rows - 1 - r);
+      score -= Math.max(0, 10 - ex) * Math.max(0, 10 - ey) * 0.5 + Math.max(0, 3 - Math.min(ex, ey)) * 1.5;
+      for (const [rx, ry] of recent) { // places it has just been
+        const away = Math.hypot(c - rx / CELL, r - ry / CELL);
+        if (away < 12) { score -= (12 - away) * 1.2; }
+      }
       if (score > best) { best = score; bestCell = i; }
     }
     if (bestCell < 0) { return null; }
     const c = bestCell % this.cols, r = (bestCell - c) / this.cols;
     return { x: (c + 0.5) * CELL, y: (r + 0.5) * CELL };
   }
+
+  /** The distance in `dist` (from `distancesTo`) at (x, y); -1 where unreachable. */
+  at(dist: Int16Array, x: number, y: number) { return dist[this.index(x, y)]; }
 
   /** How roomy the ground is at (x, y), 0 to 81. */
   roomAt(x: number, y: number) { return this.room[this.index(x, y)]; }

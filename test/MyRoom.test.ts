@@ -5,10 +5,11 @@ import { ColyseusTestServer, boot } from "@colyseus/testing";
 import appConfig from "../src/app.config.js";
 import { MyRoomState, type MoveInput } from "../src/rooms/schema/MyRoomState.js";
 import { stepEntity } from "../src/shared/movement.js";
-import { stepVoidEntity, tileAt, GRID, GONE, SOLID } from "../src/shared/void.js";
+import { stepVoidEntity, tileAt, GRID, GONE, SOLID, CRACKING } from "../src/shared/void.js";
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
 import { PLAYER_SPEED, TICK_RATE, PETS } from "../src/shared/constants.js";
 import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
+import { MODES } from "../src/shared/modes.js";
 import { inputBudget, InputPacer, MAX_BACKLOG } from "../src/rooms/inputPacing.js";
 import { sanitizeName, FALLBACK_NAME } from "../src/shared/names.js";
 import { Nav } from "../src/rooms/botNav.js";
@@ -610,7 +611,7 @@ describe("testing your Colyseus app", () => {
         assert.ok(nav.roomAt(goal.x, goal.y) >= 35, label + ": room to keep running");
         const cell = (v: number) => Math.min(Math.floor(v / 25), 1e9);
         const i = Math.floor(goal.y / 25) * nav.cols + cell(goal.x);
-        assert.ok(fromBot[i] >= 6, label + ": a walk of at least 6 cells, so the bot keeps moving");
+        assert.ok(fromBot[i] >= 10, label + ": a real trip of at least 10 cells, so the bot keeps moving");
         assert.ok(fromBot[i] + 3 < fromThreat[i], label + ": the bot gets there first");
       }
       assert.ok(tested >= 2, arena.id + ": enough open spots to test");
@@ -704,5 +705,151 @@ describe("testing your Colyseus app", () => {
     a.send("ready");
     for (let i = 0; i < 6 && room.state.winner; i++) { await room.waitForNextTimestep(); }
     assert.strictEqual(room.state.winner, "", "the round started when the one human was ready");
+  });
+
+  it("Voidfall bots: a lone player gets four, a joining human sends one home, private rooms get none", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", {});
+    await colyseus.connectTo(room, { name: "Ann" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    const bots = () => [...room.state.players.values()].filter((p) => p.name.startsWith("BOT "));
+    for (let i = 0; i < 2000 && bots().length < 4; i++) { step(); }
+    assert.strictEqual(bots().length, 4, "four bots for one human");
+    await colyseus.connectTo(room, { name: "Bo" });
+    for (let i = 0; i < 400 && bots().length > 3; i++) { step(); }
+    assert.strictEqual(bots().length, 3, "a second human sends one home");
+
+    const priv = await colyseus.createRoom<VoidState>("void_room", { private: true });
+    await colyseus.connectTo(priv, { name: "Cy" });
+    for (let i = 0; i < 600; i++) { (priv as any).step({ dt: 1 / 30 }); }
+    assert.strictEqual(priv.state.players.size, 1, "private rooms never get bots");
+  });
+
+  it("Voidfall bots play a whole round: they spread their falls out and a winner is found", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", {});
+    await colyseus.connectTo(room, { name: "Ann" }); // stands still and falls
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    for (let i = 0; i < 2000 && room.state.players.size < 5; i++) { step(); }
+    for (let i = 0; i < 300 && room.state.phase !== "playing"; i++) { step(); }
+    assert.strictEqual(room.state.phase, "playing", "the round started with bots");
+    let seconds = 0;
+    const falls: number[] = [];
+    const out = new Set<string>();
+    for (let i = 0; i < 4000 && room.state.phase === "playing"; i++) {
+      step(); seconds += 1 / 30;
+      for (const [id, p] of room.state.players) { if (!p.alive && !out.has(id)) { out.add(id); falls.push(seconds); } }
+    }
+    assert.strictEqual(room.state.phase, "over", "the round ended");
+    assert.ok(room.state.winner, "a winner was named");
+    assert.ok(seconds > 2.5, "the bots lasted a while (" + seconds.toFixed(1) + "s)");
+    const botFalls = falls.slice(1); // the first is Ann, who stood still
+    assert.ok(botFalls.length >= 3 && botFalls[botFalls.length - 1] - botFalls[0] > 0.3, "bots did not all fall at once");
+  });
+
+  it("Voidfall bots jump a one-tile gap to reach solid ground", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", {});
+    const ann = await colyseus.connectTo(room, { name: "Ann" });
+    (room as any).addBot(); (room as any).addBot();
+    const [a, b] = [...room.state.players.entries()].filter(([id]) => id.startsWith("bot-")).map(([, p]) => p);
+    room.state.players.get(ann.sessionId)!.alive = false;
+    for (let i = 0; i < room.state.tiles.length; i++) { room.state.tiles[i] = GONE; }
+    const at = (x: number, y: number) => y * GRID + x;
+    const crack = (room as any).crack as number[];
+    // Bot A stands on tile (2,4) with its tile about to drop; (3,4) is gone; (4,4) is solid. Bot B waits elsewhere.
+    room.state.tiles[at(2, 4)] = CRACKING; crack[at(2, 4)] = 0.4;
+    room.state.tiles[at(4, 4)] = SOLID;
+    room.state.tiles[at(7, 7)] = CRACKING; crack[at(7, 7)] = 5;
+    Object.assign(a, { x: 250, y: 450, z: 0, vz: 0 });
+    Object.assign(b, { x: 750, y: 750, z: 0, vz: 0 });
+    (room as any).bots.get([...room.state.players.entries()].find(([, p]) => p === a)![0]).skill = 2;
+    room.state.phase = "playing";
+    for (let i = 0; i < 50; i++) { (room as any).step({ dt: 1 / 30 }); }
+    assert.ok(a.alive, "bot A is still alive");
+    assert.strictEqual(tileAt(a.x, a.y), at(4, 4), "bot A crossed the gap to (4,4)");
+  });
+
+  it("ready: a player whose connection dropped does not hold the next round up", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic" });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const b = await colyseus.connectTo(room, { name: "Bo" });
+    (room as any).roundClock = 0.001;
+    for (let i = 0; i < 6 && !room.state.winner; i++) { await room.waitForNextTimestep(); }
+    (room as any).overLeft = 10;
+    (room as any).away.add(b.sessionId); // Bo's connection dropped (the room holds the seat)
+    a.send("ready");
+    for (let i = 0; i < 8 && room.state.winner; i++) { await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.winner, "", "Ann was ready and Bo is away, so the round started");
+  });
+
+  // ---- Long simulations with bots, stepped by hand: bad numbers, bots leaving the arena, rounds that never end, joins and leaves mid-round.
+  for (const arena of ARENAS) {
+    for (const mode of MODES) {
+      it(`Cube Tag ${arena.id} / ${mode.id}: 200 s with bots, everyone stays finite and inside the arena, rounds end`, async () => {
+        const room = await colyseus.createRoom<any>("my_room", { arena: arena.id, mode: mode.id });
+        const a = await colyseus.connectTo(room, { name: "Ann" });
+        const b = await colyseus.connectTo(room, { name: "Bo" });
+        const step = () => (room as any).step({ dt: 1 / 30 });
+        let rounds = 0, lastRound = room.state.round, readies = 0;
+        for (let i = 0; i < 30 * 200; i++) {
+          if (room.state.players.size < 5) { (room as any).botWait = 100; }
+          step();
+          if (room.state.round !== lastRound) { rounds++; lastRound = room.state.round; }
+          if (room.state.winner && (room as any).overLeft > 12 && readies < 40) { a.send("ready"); b.send("ready"); readies++; }
+          if (i % 15 === 0) {
+            const bounds = (room as any).arena;
+            for (const [id, p] of room.state.players) {
+              assert.ok([p.x, p.y, p.z, p.vx, p.vy, p.vz].every(Number.isFinite), `${id} has a bad number at step ${i}`);
+              assert.ok(p.x >= -1 && p.y >= -1 && p.x <= bounds.width + 1 && p.y <= bounds.height + 1, `${id} left the arena at step ${i}`);
+            }
+          }
+        }
+        assert.ok(rounds >= 1, "a round ended and the next began");
+      });
+    }
+  }
+
+  it("Voidfall with bots: 40 rounds, every one ends, nothing goes wrong, bots are topped up", async () => {
+    const room = await colyseus.createRoom<any>("void_room", {});
+    await colyseus.connectTo(room, { name: "Ann" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    let rounds = 0, phaseTime = 0, lastPhase = "";
+    for (let i = 0; i < 30 * 1500 && rounds < 40; i++) {
+      step();
+      const s = room.state;
+      if (s.phase !== lastPhase) { if (lastPhase === "playing") { rounds++; } lastPhase = s.phase; phaseTime = 0; }
+      phaseTime += 1 / 30;
+      assert.ok(!(s.phase === "playing" && phaseTime > 120), "a round is stuck");
+      for (const [id, p] of s.players) { assert.ok([p.x, p.y, p.z, p.vz].every(Number.isFinite), `${id} has a bad number`); }
+    }
+    assert.strictEqual(rounds, 40, "40 rounds finished");
+    assert.strictEqual([...room.state.players.values()].filter((p: any) => p.name.startsWith("BOT")).length, 4, "still four bots");
+  });
+
+  it("Voidfall: a human who joins mid-round watches, then plays; the last human leaving empties the room", async () => {
+    const room = await colyseus.createRoom<any>("void_room", {});
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    for (let i = 0; i < 3000 && room.state.phase !== "playing"; i++) { step(); }
+    const b = await colyseus.connectTo(room, { name: "Bo" });
+    assert.strictEqual(room.state.players.get(b.sessionId).alive, false, "a mid-round joiner watches");
+    for (let i = 0; i < 3000 && room.state.phase !== "over"; i++) { step(); }
+    for (let i = 0; i < 200; i++) { step(); }
+    assert.strictEqual(room.state.players.get(b.sessionId).alive, true, "Bo plays the next round");
+    assert.strictEqual([...room.state.players.values()].filter((p: any) => p.name.startsWith("BOT")).length, 3, "three bots for two humans");
+    await a.leave(); await b.leave();
+    for (let i = 0; i < 100 && room.state.players.size > 0; i++) { try { step(); } catch { break; } }
+    assert.strictEqual(room.state.players.size, 0, "nobody is left in the room");
+  });
+
+  it("Voidfall: the winner is not moved while the winner banner shows, even when someone joins", async () => {
+    const room = await colyseus.createRoom<any>("void_room", {});
+    await colyseus.connectTo(room, { name: "Ann" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    for (let i = 0; i < 4000 && room.state.phase !== "over"; i++) { step(); }
+    assert.strictEqual(room.state.phase, "over");
+    const winner = [...room.state.players.values()].find((p: any) => p.alive)!;
+    const spot = [winner.x, winner.y];
+    await colyseus.connectTo(room, { name: "Bo" });
+    for (let i = 0; i < 100 && room.state.phase === "over"; i++) { step(); }
+    if (room.state.phase === "over") { assert.deepStrictEqual([winner.x, winner.y], spot, "the winner stayed where they were"); }
   });
 });

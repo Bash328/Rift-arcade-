@@ -4,15 +4,42 @@ import { MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { InputPacer } from "./inputPacing.js";
 import { sanitizeName } from "../shared/names.js";
-import { TICK_RATE, PETS } from "../shared/constants.js";
+import { TICK_RATE, PETS, BOT_NAMES } from "../shared/constants.js";
 import {
-  GRID, VOID_SIZE, SOLID, CRACKING, GONE, CRACK_TIME, FALL_LIMIT, tileAt, stepVoidEntity,
+  GRID, TILE, VOID_SIZE, SOLID, CRACKING, GONE, CRACK_TIME, FALL_LIMIT, LAND_GRACE, tileAt, stepVoidEntity, type VoidInput,
 } from "../shared/void.js";
 
 const COUNTDOWN = 5;
 const OVER_PAUSE = 5;
 const QUIET_TICKS = 6;
 const IDLE = { moveX: 0, moveY: 0, jump: 0 };
+
+/** Public rooms are topped up with bots to this many players (a lone player gets four); each human who joins sends one home. */
+const BOT_FILL = 5;
+const BOT_FIRST_DELAY = 6;
+const BOT_NEXT_DELAY = 2;
+
+/**
+ * How good a bot is. `react`: seconds it takes to decide on each step. `leaveAt`: it starts moving off its tile when
+ * that many seconds are left before it drops (a person needs about 0.35 to get clear). `slip`: chance of freezing for a
+ * moment at the worst time. Every bot moves at a player's speed.
+ */
+const SKILLS = [
+  { react: [0.25, 0.45], leaveAt: 0.75, slip: 0.06, noise: 2 },    // sloppy
+  { react: [0.15, 0.3], leaveAt: 0.6, slip: 0.02, noise: 1 },      // steady
+  { react: [0.08, 0.18], leaveAt: 0.5, slip: 0.005, noise: 0.3 },  // sharp
+];
+/** Chance a new bot is sloppy, steady or sharp: sloppy ones are rare, so the room stays a challenge. */
+const SKILL_ODDS = [0.1, 0.45, 0.45];
+
+interface BotBrain {
+  skill: number;
+  /** Seconds until it decides again. */
+  retarget: number;
+  /** The tile it is heading for (-1 = standing and waiting), and whether getting there means jumping a gap. */
+  goal: number;
+  hop: boolean;
+}
 
 /**
  * Voidfall: everyone stands on a grid of tiles. A tile cracks the moment someone
@@ -37,12 +64,17 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   /** Consecutive ticks each player has sent no input. */
   private quiet = new Map<string, number>();
   private pacers = new Map<string, InputPacer>();
+  private bots = new Map<string, BotBrain>();
+  private botCount = 0;
+  private botWait = 0;
+  private isPrivate = false;
 
   async onCreate(options: any) {
     assertRoomCapacity();
     // The room id doubles as the invite code. Private rooms skip quick-play matchmaking.
     this.roomId = await freeRoomCode();
-    if (options?.private) { await this.setPrivate(true); }
+    this.isPrivate = !!options?.private;
+    if (this.isPrivate) { await this.setPrivate(true); }
     for (let i = 0; i < GRID * GRID; i++) { this.state.tiles.push(SOLID); }
     this.state.phase = "waiting";
     this.setPatchRate(1000 / TICK_RATE);
@@ -60,7 +92,7 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
       pet: n % PETS.length,
       alive: !inRound,
     }));
-    if (!inRound) { this.spread(); }
+    if (this.state.phase === "waiting" || this.state.phase === "countdown") { this.spread(); } // not while the winner is celebrating
   }
 
   /** A refresh or network blip: hold the seat for 30s so the player can resume as the same character. */
@@ -72,6 +104,137 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     this.state.players.delete(client.sessionId);
     this.quiet.delete(client.sessionId);
     this.pacers.delete(client.sessionId);
+  }
+
+  /** Top a public room up to BOT_FILL players with labelled bots, and send one home for every human who joins. */
+  private manageBots(dt: number) {
+    const s = this.state;
+    const humans = s.players.size - this.bots.size;
+    const want = this.isPrivate || humans < 1 ? 0 : Math.max(0, BOT_FILL - humans);
+    if (this.bots.size > want) {
+      // Never make a bot vanish in the middle of a round: wait until it has fallen or the round is over.
+      const id = [...this.bots.keys()].reverse().find((b) => s.phase !== "playing" || !s.players.get(b)?.alive);
+      if (id) { this.bots.delete(id); s.players.delete(id); this.botWait = 0; }
+    } else if (this.bots.size < want && (s.phase === "waiting" || s.phase === "countdown")) {
+      this.botWait += dt;
+      if (this.botWait >= (this.bots.size === 0 ? BOT_FIRST_DELAY : BOT_NEXT_DELAY)) { this.addBot(); this.botWait = 0; }
+    } else {
+      this.botWait = 0;
+    }
+  }
+
+  private addBot() {
+    const n = this.botCount++;
+    const slot = this.joinCount++;
+    const id = `bot-${n}`;
+    this.state.players.set(id, new VoidPlayer({
+      x: VOID_SIZE / 2, y: VOID_SIZE / 2, vx: 0, vy: 0, z: 0, vz: 0,
+      name: `BOT ${BOT_NAMES[n % BOT_NAMES.length]}`,
+      hue: (slot * 137.5 + 200) % 360,
+      pet: slot % PETS.length,
+      alive: true,
+    }));
+    let roll = Math.random();
+    const skill = SKILL_ODDS.findIndex((odds) => (roll -= odds) < 0);
+    this.bots.set(id, { skill: skill < 0 ? 1 : skill, retarget: 0, goal: -1, hop: false });
+    this.spread();
+  }
+
+  /** Bots move with the same `stepVoidEntity` as everyone; they only decide what to press. */
+  private stepBots(dt: number) {
+    const s = this.state;
+    for (const [id, brain] of this.bots) {
+      const bot = s.players.get(id);
+      if (!bot || !bot.alive) { continue; }
+      stepVoidEntity(bot, s.phase === "playing" ? this.botCommand(bot, brain, dt) : IDLE, dt, s.tiles);
+    }
+  }
+
+  /**
+   * What a bot presses this tick. A tile drops 1.2s after anyone lands on it, so the way to last is to use few tiles:
+   * stand until the tile is about to go, then step to the best neighbour (jumping a one-tile gap when that is the way).
+   */
+  private botCommand(bot: VoidPlayer, brain: BotBrain, dt: number): VoidInput {
+    const s = this.state;
+    const skill = SKILLS[brain.skill];
+    const here = tileAt(bot.x, bot.y);
+    if (here < 0 || bot.z < -LAND_GRACE) { return IDLE; } // already falling
+    const dir = (delta: number) => (Math.abs(delta) > 6 ? Math.sign(delta) : 0);
+
+    if (brain.goal >= 0) {
+      const gx = ((brain.goal % GRID) + 0.5) * TILE, gy = (Math.floor(brain.goal / GRID) + 0.5) * TILE;
+      if (Math.hypot(bot.x - gx, bot.y - gy) < 18) { brain.goal = -1; return IDLE; } // arrived: stand and wait
+      const moveX = dir(gx - bot.x), moveY = dir(gy - bot.y);
+      // Straight at a gap with the goal beyond it: jump once the missing tile is next.
+      const ahead = tileAt(bot.x + moveX * 45, bot.y + moveY * 45);
+      const jump = brain.hop && bot.z === 0 && (moveX === 0 || moveY === 0) && (ahead < 0 || s.tiles[ahead] === GONE) ? 1 : 0;
+      return { moveX, moveY, jump };
+    }
+
+    brain.retarget -= dt;
+    if (brain.retarget > 0) { return IDLE; }
+    brain.retarget = skill.react[0] + Math.random() * (skill.react[1] - skill.react[0]);
+    const remaining = s.tiles[here] === CRACKING ? this.crack[here] : CRACK_TIME;
+    if (remaining > skill.leaveAt) { return IDLE; } // plenty of time on this one
+    if (Math.random() < skill.slip) { brain.retarget += 0.35; return IDLE; } // a moment's hesitation
+
+    // The best tile within reach: untouched ground with solid neighbours, away from other players and from the middle.
+    const hx = here % GRID, hy = Math.floor(here / GRID);
+    const solidAround = (i: number) => {
+      const cx = i % GRID, cy = Math.floor(i / GRID);
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = cx + dx, y = cy + dy;
+          if ((dx || dy) && x >= 0 && y >= 0 && x < GRID && y < GRID && s.tiles[y * GRID + x] === SOLID) { n++; }
+        }
+      }
+      return n;
+    };
+    // Solid tiles that touch form an island; a small island is a trap, a big one is somewhere to last.
+    const island = new Int16Array(GRID * GRID).fill(-1);
+    const islandSize: number[] = [];
+    for (let start = 0; start < island.length; start++) {
+      if (s.tiles[start] !== SOLID || island[start] >= 0) { continue; }
+      const id = islandSize.length;
+      const stack = [start];
+      island[start] = id;
+      let size = 0;
+      while (stack.length) {
+        const i = stack.pop()!;
+        size++;
+        const cx = i % GRID, cy = Math.floor(i / GRID);
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const x = cx + dx, y = cy + dy, j = y * GRID + x;
+            if (x >= 0 && y >= 0 && x < GRID && y < GRID && s.tiles[j] === SOLID && island[j] < 0) { island[j] = id; stack.push(j); }
+          }
+        }
+      }
+      islandSize.push(size);
+    }
+    let best = -Infinity, goal = -1, hop = false;
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const x = hx + dx, y = hy + dy;
+        if ((!dx && !dy) || x < 0 || y < 0 || x >= GRID || y >= GRID) { continue; }
+        const far = Math.max(Math.abs(dx), Math.abs(dy)) === 2;
+        // Two tiles away is only reachable by jumping straight across a missing tile.
+        if (far && !((dx === 0 || dy === 0) && s.tiles[(hy + dy / 2) * GRID + hx + dx / 2] === GONE)) { continue; }
+        const i = y * GRID + x;
+        if (s.tiles[i] !== SOLID) { continue; }
+        const cx = (x + 0.5) * TILE, cy = (y + 0.5) * TILE;
+        let score = solidAround(i) + 0.25 * Math.min(islandSize[island[i]], 40) + 0.3 * Math.hypot(x - (GRID - 1) / 2, y - (GRID - 1) / 2) - (far ? 1.5 : 0) + Math.random() * skill.noise;
+        for (const other of s.players.values()) {
+          if (other !== bot && other.alive && Math.hypot(other.x - cx, other.y - cy) < 70) { score -= 2; }
+        }
+        if (score > best) { best = score; goal = i; hop = far; }
+      }
+    }
+    brain.goal = goal;
+    brain.hop = hop;
+    if (goal < 0) { return IDLE; } // nowhere to go
+    return this.botCommand(bot, brain, 0);
   }
 
   /** Put every living player on an even ring around the middle of the grid. */
@@ -88,8 +251,10 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
 
   private step(ctx: StepContext) {
     const s = this.state;
+    this.manageBots(ctx.dt);
+    this.stepBots(ctx.dt);
     for (const [sessionId, p] of s.players) {
-      if (!p.alive) { continue; }
+      if (!p.alive || this.bots.has(sessionId)) { continue; } // bots are moved by stepBots
       let stepped = 0;
       const channel = this.inputs.get(sessionId);
       let pacer = this.pacers.get(sessionId);

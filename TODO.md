@@ -43,13 +43,23 @@ Workflow note: changes are only pushed when asked ("push").
 - Three skill levels per bot (sloppy 10%, steady 45%, sharp 45%): reaction time, aiming ahead of a runner, pauses and rare wrong turns. Same speed as a player.
 - A chasing bot prefers people over other bots (so a sharp bot does not farm the weak ones), will not rematch whoever just tagged it, and still gives up a chase after 8 seconds.
 - The IT lamp sits beside the names.
+- Runner bots roam the whole arena instead of circling one patch: they commit to a far, new destination (4 to 7 seconds, not a re-pick every second), avoid their last few goals, and corners are penalised harder. In a 30 second test they visited about twice as many map regions and their paths were about twice as straight.
+- Voidfall bots (not pushed): a lone player gets four, each human who joins sends one home, private rooms get none. A bot waits on its tile until about 0.5 to 0.75 seconds before it drops, then steps to a good neighbouring tile (big intact areas first, away from others) and jumps a one-tile gap in a straight line. Three skill levels as in Cube Tag. Rounds with bots last about 10 to 20 seconds.
 - Juking: sharp bots (10% a re-aim) and steady ones (3%) sidestep, toward the roomier side, when a chaser is within 150 units.
 - Ready status (Cube Tag): the winner card now waits up to 15 seconds and shows the next mode, its rules and "x of y ready". Each player presses Ready (or Enter); the round starts as soon as every human has, bots always count as ready, and a tap in the first 1.5 seconds is ignored. Voidfall has no winner card yet, so no Ready there.
+
+## Found and fixed in the long test pass (2026-10-18)
+
+- Voidfall: someone joining during the winner banner teleported the winner to the ring (already there before the bots; the bots made it more likely). Spreading now only happens before a round, and bots only join then.
+- Ready: a player whose connection dropped (seat held for 30 seconds) no longer holds the next round up.
+- Voidfall on a phone: the wider OUT lamp overlapped the start of "You fell!".
+- New long simulations in the test suite: every arena and mode with bots for 200 simulated seconds (finite positions, nobody outside the arena, rounds end), 40 Voidfall rounds with bots, joins and leaves mid-round. Also run: the load test on both games (no server errors) and a browser smoke test of the production build on phone and desktop sizes (no errors).
+- Known and left alone: a closed tab keeps its seat for 30 seconds, so it shows in the name list as a ghost for that long (this is what lets a refresh resume).
 
 ## Ideas to consider
 
 - Temporary power-ups (for example a speed boost or a shield for a few seconds).
-- Hex-A-Gone: design grilled up to round 1 (see the memory note); resume at round 2.
+- Hex-A-Gone: design grilled up to round 1 (see the memory note); resume at round 2. Voidfall bots now exist, so the 2-player minimum no longer leaves a lone player waiting, and Hex-A-Gone bots would need to handle several floors.
 
 ## From the research report (`reports/Rift Arcade improvement roadmap.md`)
 

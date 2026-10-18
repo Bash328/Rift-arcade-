@@ -3,7 +3,7 @@ import { MyRoomState, Player, Orb, MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { InputPacer } from "./inputPacing.js";
 import { stepEntity } from "../shared/movement.js";
-import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, READY_LOCK, PETS } from "../shared/constants.js";
+import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, READY_LOCK, PETS, BOT_NAMES } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
 import { MODES, modeOf, ORB_REACH, ORB_HEIGHT } from "../shared/modes.js";
 import { sanitizeName } from "../shared/names.js";
@@ -19,7 +19,6 @@ const BOT_NEXT_DELAY = 2;
 /** Seconds after a tag during which the player who was just tagged cannot be tagged straight back. */
 const TAG_BACK_BLOCK = 2;
 const IDLE_INPUT = { moveX: 0, moveY: 0, jump: 0 };
-const BOT_NAMES = ["Pip", "Moss", "Dot", "Bolt", "Zig", "Fizz", "Nova", "Taco"];
 
 /**
  * How good a bot is. `react`: seconds between re-aims. `idle`: chance of pausing at a re-aim. `slip`: chance of a wrong
@@ -43,6 +42,8 @@ interface BotBrain {
   slipLeft: number; slipX: number; slipY: number;
   /** Where a runner is heading (time it expires in ms, distances to it for stepping). */
   goalX: number; goalY: number; goalUntil: number; goalDist?: Int16Array;
+  /** The last few goals, so the next one is somewhere new. */
+  recent: [number, number][];
 }
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
@@ -69,6 +70,8 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   private lockedMode?: string;
   private overLeft = 0;
   private isPrivate = false;
+  /** Players whose connection dropped and whose seat is held for a while: the next round does not wait for their Ready. */
+  private away = new Set<string>();
   private botWait = 0;
   private botCount = 0;
   private bots = new Map<string, BotBrain>();
@@ -141,6 +144,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   }
 
   private removePlayer(id: string) {
+    this.away.delete(id);
     this.pacers.delete(id);
     this.state.players.delete(id);
     if (this.state.it === id) {
@@ -190,7 +194,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     if (this.overLeft > 0) {
       this.overLeft -= ctx.dt;
       // Everyone ready: no need to wait out the rest.
-      if (this.overLeft > 0 && this.state.players.size > 0 && [...this.state.players.values()].every((p) => p.ready)) { this.overLeft = 0; }
+      if (this.overLeft > 0 && this.state.players.size > 0 && [...this.state.players].every(([id, p]) => p.ready || this.away.has(id))) { this.overLeft = 0; }
       this.state.nextIn = Math.max(0, Math.ceil(this.overLeft));
       if (this.overLeft <= 0) { this.newRound(); }
       return;
@@ -327,7 +331,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     const skill = SKILL_ODDS.findIndex((odds) => (roll -= odds) < 0);
     this.bots.set(id, {
       dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0, scatter: NaN, jump: false, target: "", targetSince: 0, skip: new Set(),
-      skill: skill < 0 ? 1 : skill, slipLeft: 0, slipX: 0, slipY: 0, goalX: 0, goalY: 0, goalUntil: 0,
+      skill: skill < 0 ? 1 : skill, slipLeft: 0, slipX: 0, slipY: 0, goalX: 0, goalY: 0, goalUntil: 0, recent: [],
     });
     if (this.state.mode === "tag" && !this.state.it) { this.setIt(id); }
   }
@@ -473,15 +477,25 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       if (other.hot && d < nearest) { nearest = d; threat = other; }
     }
     if (threat) {
-      // Runners never stand still and never run into a corner: head for open ground the chaser cannot reach first,
-      // re-planned every second or two (at once when the chaser is close) and when the bot gets there.
+      // Runners never stand still and never run into a corner: they pick open ground the chaser cannot reach first,
+      // somewhere new and a real trip away, and keep going there. The plan is dropped only on arrival, after a while, or
+      // when the chaser could now get there first, so a runner crosses the arena instead of dithering around one patch.
       const now = Date.now();
-      if (nearest < 220 || now > brain.goalUntil || Math.hypot(bot.x - brain.goalX, bot.y - brain.goalY) < 50) {
-        const goal = nav.fleeGoal(nav.distancesTo(bot.x, bot.y), nav.distancesTo(threat.x, threat.y));
+      let fromThreat: Int16Array | undefined;
+      let replan = now > brain.goalUntil || !brain.goalDist || Math.hypot(bot.x - brain.goalX, bot.y - brain.goalY) < 50;
+      if (!replan && nearest < 220 && brain.goalDist) {
+        fromThreat = nav.distancesTo(threat.x, threat.y);
+        const remaining = nav.at(brain.goalDist, bot.x, bot.y), theirs = nav.at(fromThreat, brain.goalX, brain.goalY);
+        if (remaining < 0 || (theirs >= 0 && theirs <= remaining + 3)) { replan = true; }
+      }
+      if (replan) {
+        const goal = nav.fleeGoal(nav.distancesTo(bot.x, bot.y), fromThreat ?? nav.distancesTo(threat.x, threat.y), brain.recent);
         if (goal) {
           brain.goalX = goal.x; brain.goalY = goal.y;
           brain.goalDist = nav.distancesTo(goal.x, goal.y);
-          brain.goalUntil = now + 1200 + Math.random() * 1200;
+          brain.goalUntil = now + 4000 + Math.random() * 3000;
+          brain.recent.push([goal.x, goal.y]);
+          if (brain.recent.length > 4) { brain.recent.shift(); }
         } else { brain.goalUntil = 0; brain.goalDist = undefined; }
       }
       // A chaser right behind: now and then a sharp bot dodges sideways (toward the roomier side) instead of running straight.
@@ -606,10 +620,12 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     // or onLeave() by itself. The catch is only here because the promise also
     // rejects when the room is already disposing (server shutdown), which would
     // otherwise surface as an unhandled rejection.
+    this.away.add(client.sessionId);
     this.allowReconnection(client, 30).catch(() => {});
   }
 
   onReconnect(client: Client) {
     console.log(client.sessionId, "reconnected!");
+    this.away.delete(client.sessionId);
   }
 }
