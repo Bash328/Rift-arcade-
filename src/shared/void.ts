@@ -64,6 +64,29 @@ export const breakTime = (floor: number, kind: number) => BREAK_BASE[kind] * FLO
 /** Height of a floor's surface. */
 export const floorZ = (floor: number) => (floor === 0 ? 0 : -floor * FLOOR_GAP);
 
+// ---- Block Party: one square floor painted in four colours; a colour is called and every other tile drops.
+
+/** Colours (and symbols) on the floor. */
+export const PARTY_COLOURS = 4;
+/** Seconds the called colour is shown before the other tiles drop: 5 at first, 0.4 less each round, never under 1.2. */
+export const partyCallTime = (round: number) => Math.max(1.2, 5 - 0.4 * (round - 1));
+/** How long the floor stays gone, and how long the new floor is shown before the next colour is called. */
+export const PARTY_DROP_TIME = 2.0;
+export const PARTY_RESET_TIME = 1.0;
+/** The tiles that are about to drop start flashing this many seconds before it happens (that is how the extra drops are told apart too). */
+export const PARTY_WARN = 0.8;
+/** From round 4 some tiles of the called colour drop too, more each round (they flash with the rest), so a game cannot go on for ever. */
+export const partyExtraDrop = (round: number) => (round <= 3 ? 0 : Math.min(0.85, 0.1 * (round - 3)));
+/** A new floor: every colour on about a quarter of the tiles, shuffled. */
+export function dealParty(random: () => number = Math.random): number[] {
+  const kinds = Array.from({ length: CELLS }, (_, i) => i % PARTY_COLOURS);
+  for (let i = kinds.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [kinds[i], kinds[j]] = [kinds[j], kinds[i]];
+  }
+  return kinds;
+}
+
 // ---- Boards: where the tiles are
 
 /** The layout of one floor: how to find a tile from a position, where a tile is, and which tiles touch it. */

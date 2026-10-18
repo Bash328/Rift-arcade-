@@ -27,6 +27,19 @@ export const VOID_MODES: VoidMode[] = [
     blurb: "Three floors. Green tiles last, red ones go almost at once.",
     rules: "Three floors of tiles. A tile starts breaking when you land on it, and its colour says how fast: green about 2 seconds, yellow about 1, red almost at once. Fall through a gap and you land on the floor below, or you are out if there is no tile there. After a while tiles start cracking on their own. The last player standing wins.",
   },
+  {
+    id: "party", name: "Block Party", minHumans: 1, floors: 1, cells: CELLS,
+    blurb: "A colour is called: be standing on it when the countdown ends.",
+    rules: "The floor is painted in four colours, each with its own symbol. A colour is called out with a countdown: get onto a tile of that colour before it ends, because every other tile drops away. The floor comes back in a new pattern, and the countdown gets shorter every round. The last player standing wins.",
+  },
+];
+
+/** The colours of Block Party, as shown on the tiles and in the call-out (each also has its own symbol). */
+export const PARTY_LOOK = [
+  { name: "BLUE", colour: 0x3a8bff, symbol: "●" },
+  { name: "ORANGE", colour: 0xff9a2e, symbol: "▲" },
+  { name: "PINK", colour: 0xff5ec4, symbol: "■" },
+  { name: "GREEN", colour: 0x3fd06a, symbol: "★" },
 ];
 
 export const VOID_MODE_BY_ID: Record<string, VoidMode> = Object.fromEntries(VOID_MODES.map((m) => [m.id, m]));

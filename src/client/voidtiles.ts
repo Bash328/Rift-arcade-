@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { TILE, CELLS, HEX_CELLS, HEX_FLOORS, HEX_R, CRACKING, GONE, RED, GREEN, SQUARE_BOARD, HEX_BOARD, floorZ } from "../shared/void.js";
 import { GRAVITY } from "../shared/constants.js";
+import { PARTY_LOOK } from "../shared/voidModes.js";
 import { NEON_CYAN, loadFx } from "./kit.js";
 
 const TILE_H = 24;
@@ -27,6 +28,8 @@ const CLASSIC = {
 /** Hex-A-Gone: plain, solid colours (green lasts, yellow is quicker, red goes almost at once). A cracking tile flashes white. */
 const HEX_BODY = [0x2fcf5f, 0xffd23a, 0xff4a4a].map((c) => new THREE.Color(c));
 const HEX_FLASH = new THREE.Color(0xffffff);
+/** Block Party: four plain colours, each with a symbol on top, so they can be told apart without the colour. */
+const PARTY_BODY = PARTY_LOOK.map((p) => new THREE.Color(p.colour));
 
 /** Per-instance visibility for a material, read from the instanced attribute `aFade` (0 hides the tile, 1 shows it). */
 function fadeable<T extends THREE.Material>(material: T, fade: Float32Array, geometry: THREE.BufferGeometry): T {
@@ -64,6 +67,26 @@ function stripeTexture() {
   return tex;
 }
 
+/** A white circle, triangle, square or star on a transparent square, one per Block Party colour. */
+function symbolTexture(kind: number) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "rgba(255,255,255,0.92)";
+  g.strokeStyle = "rgba(0,0,0,0.35)";
+  g.lineWidth = 6;
+  g.beginPath();
+  if (kind === 0) { g.arc(64, 64, 40, 0, Math.PI * 2); }
+  else if (kind === 1) { g.moveTo(64, 20); g.lineTo(108, 100); g.lineTo(20, 100); g.closePath(); }
+  else if (kind === 2) { g.rect(26, 26, 76, 76); }
+  else { for (let n = 0; n < 10; n++) { const r = n % 2 ? 22 : 46, a = (Math.PI * n) / 5 - Math.PI / 2; g.lineTo(64 + Math.cos(a) * r, 66 + Math.sin(a) * r); } g.closePath(); }
+  g.fill();
+  g.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 export interface TileView {
   /** Where the local player is, to hide the floors above them: null when spectating (everything shows). */
   me: { floor: number } | null;
@@ -77,6 +100,9 @@ interface SetConfig {
   frameGeo?: THREE.BufferGeometry;
   fxGeo?: THREE.BufferGeometry;
   stripeGeo?: THREE.BufferGeometry;
+  /** Block Party: plain colours by kind, and one symbol plane per colour. */
+  party?: boolean;
+  symbolGeos?: THREE.BufferGeometry[];
 }
 
 /** One layout's worth of instanced tiles. */
@@ -91,6 +117,8 @@ function createSet(scene: THREE.Scene, cfg: SetConfig, events: { cracked(at: THR
   const bodies = new THREE.InstancedMesh(cfg.bodyGeo, bodyMaterial, max);
   bodies.receiveShadow = true; // pets cast onto the tiles; the tiles themselves cast nothing (hidden floors must leave no shadow)
   const meshes: THREE.InstancedMesh[] = [bodies];
+  /** Meshes numbered by position in a list (red tiles, tiles of one colour), not by tile: the stripes and the symbols. */
+  const listed: THREE.InstancedMesh[] = [];
   let frames: THREE.InstancedMesh | undefined;
   let fx: THREE.InstancedMesh | undefined;
   let stripes: THREE.InstancedMesh | undefined;
@@ -101,15 +129,23 @@ function createSet(scene: THREE.Scene, cfg: SetConfig, events: { cracked(at: THR
   }
   if (cfg.stripeGeo) {
     stripes = new THREE.InstancedMesh(cfg.stripeGeo, fadeable(new THREE.MeshBasicMaterial({ map: stripeTexture(), transparent: true, depthWrite: false }), stripeFade, cfg.stripeGeo), max);
-    meshes.push(stripes);
+    listed.push(stripes);
   }
+  const symbols: THREE.InstancedMesh[] = [];
+  const symbolFades = (cfg.symbolGeos ?? []).map(() => new Float32Array(max).fill(1));
+  (cfg.symbolGeos ?? []).forEach((geo, k) => {
+    const mesh = new THREE.InstancedMesh(geo, fadeable(new THREE.MeshBasicMaterial({ map: symbolTexture(k), transparent: true, depthWrite: false }), symbolFades[k], geo), max);
+    symbols.push(mesh);
+    listed.push(mesh);
+  });
   const hide = new THREE.Matrix4().makeScale(0, 0, 0);
-  for (const mesh of meshes) {
+  for (const mesh of [...meshes, ...listed]) {
     mesh.frustumCulled = false;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.visible = false;
     scene.add(mesh);
-    for (let i = 0; i < max; i++) { mesh.setMatrixAt(i, hide); mesh.setColorAt(i, OFF); }
+    // The stripes and symbols keep the plain white of their texture; only the tiles themselves take an instance colour.
+    for (let i = 0; i < max; i++) { mesh.setMatrixAt(i, hide); if (!listed.includes(mesh)) { mesh.setColorAt(i, OFF); } }
   }
 
   // What each tile showed last frame, and its fall.
@@ -125,6 +161,7 @@ function createSet(scene: THREE.Scene, cfg: SetConfig, events: { cracked(at: THR
   const matrix = new THREE.Matrix4();
   const tint = new THREE.Color();
   let redTiles: number[] = [];
+  let symbolTiles: number[][] = [];
   let signature = "";
 
   /** A new round (or a different mode): forget what the tiles were doing and find the red ones, which get stripes. */
@@ -132,19 +169,25 @@ function createSet(scene: THREE.Scene, cfg: SetConfig, events: { cracked(at: THR
     shown.fill(255); fallV.fill(0); fallY.fill(0); falling.fill(0); fade.fill(1);
     redTiles = [];
     if (stripes) { for (let i = 0; i < kinds.length && i < max; i++) { if (kinds[i] === RED) { redTiles.push(i); } } stripes.count = redTiles.length; }
+    symbolTiles = symbols.map((): number[] => []);
+    for (let i = 0; i < kinds.length && i < max; i++) { symbolTiles[kinds[i]]?.push(i); }
+    symbols.forEach((mesh, k) => { mesh.count = symbolTiles[k].length; });
   }
 
   return {
-    show(on: boolean) { for (const mesh of meshes) { mesh.visible = on; } },
+    show(on: boolean) { for (const mesh of [...meshes, ...listed]) { mesh.visible = on; } },
     update(states: ArrayLike<number>, kinds: ArrayLike<number>, round: number, view: TileView, now: number, dt: number) {
       const count = Math.min(states.length, max);
-      const sig = `${round}:${count}:${kinds.length}`;
+      // A Block Party floor is dealt again every call, so a change of colours counts as a new layout too.
+      let hash = 0;
+      if (cfg.party) { for (let n = 0; n < kinds.length; n++) { hash = (hash * 31 + kinds[n]) | 0; } }
+      const sig = `${round}:${count}:${kinds.length}:${hash}`;
       if (sig !== signature) { signature = sig; reset(kinds); }
       const blink = Math.sin(now / 60) > 0 ? 0 : 1;
       const k = Math.min(1, dt * 14);
 
       for (let i = 0; i < max; i++) {
-        if (i >= count) { for (const mesh of meshes) { if (mesh !== stripes) { mesh.setMatrixAt(i, hide); } } seen[i] = 0; continue; }
+        if (i >= count) { for (const mesh of meshes) { mesh.setMatrixAt(i, hide); } seen[i] = 0; continue; }
         const state = states[i];
         const floor = Math.floor(i / per), cell = i % per;
         const [x, z] = board.centre(cell);
@@ -170,14 +213,16 @@ function createSet(scene: THREE.Scene, cfg: SetConfig, events: { cracked(at: THR
         seen[i] = visible && fade[i] >= 0.5 ? 1 : 0;
 
         if (!visible || fade[i] < 0.02) {
-          for (const mesh of meshes) { if (mesh !== stripes) { mesh.setMatrixAt(i, hide); mesh.setColorAt(i, OFF); } }
+          for (const mesh of meshes) { mesh.setMatrixAt(i, hide); mesh.setColorAt(i, OFF); }
           continue;
         }
         matrix.makeTranslation(x, y, z);
         bodies.setMatrixAt(i, matrix);
         frames?.setMatrixAt(i, matrix);
         const cracking = state === CRACKING;
-        if (hex) {
+        if (cfg.party) {
+          bodies.setColorAt(i, cracking && blink === 0 ? HEX_FLASH : PARTY_BODY[kinds[i] ?? 0]);
+        } else if (hex) {
           const base = HEX_BODY[kinds[i] ?? GREEN];
           bodies.setColorAt(i, cracking && blink === 0 ? HEX_FLASH : base);
         } else {
@@ -212,8 +257,23 @@ function createSet(scene: THREE.Scene, cfg: SetConfig, events: { cracked(at: THR
         stripes.instanceMatrix.needsUpdate = true;
       }
 
+      // One symbol on top of every tile of each Block Party colour, riding along with it.
+      symbols.forEach((mesh, k) => {
+        const list = symbolTiles[k] ?? [];
+        for (let j = 0; j < list.length; j++) {
+          const i = list[j];
+          if (!seen[i]) { mesh.setMatrixAt(j, hide); symbolFades[k][j] = 0; continue; }
+          const [x, z] = board.centre(i % per);
+          place.set(x, topY[i] + 0.5, z);
+          matrix.compose(place, flatQuat, one);
+          mesh.setMatrixAt(j, matrix);
+          symbolFades[k][j] = 1;
+        }
+        (mesh.geometry.getAttribute("aFade") as THREE.InstancedBufferAttribute).needsUpdate = true;
+        mesh.instanceMatrix.needsUpdate = true;
+      });
+
       for (const mesh of meshes) {
-        if (mesh === stripes) { continue; }
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) { mesh.instanceColor.needsUpdate = true; }
         (mesh.geometry.getAttribute("aFade") as THREE.InstancedBufferAttribute).needsUpdate = true;
@@ -230,6 +290,12 @@ export function createTiles(scene: THREE.Scene, events: { cracked(at: THREE.Vect
     frameGeo: frameGeometry(SLICE, TILE_H, SLICE, 3),
     fxGeo: new THREE.PlaneGeometry(TILE - 14, TILE - 14),
   }, events);
+  // Block Party: the same 81 square slabs, plain colours, a symbol on each.
+  const party = createSet(scene, {
+    hex: false, party: true, max: CELLS, per: CELLS,
+    bodyGeo: new THREE.BoxGeometry(SLICE, TILE_H, SLICE),
+    symbolGeos: PARTY_LOOK.map(() => new THREE.PlaneGeometry(TILE - 44, TILE - 44)),
+  }, events);
   // Hex-A-Gone: 270 plain hexagon slabs, red ones striped. Cylinders of six sides have a corner pointing along z, which is
   // the way the floor is laid out (pointy side up on the plan).
   const hexStripe = new THREE.CircleGeometry(HEX_RADIUS - 11, 6).rotateZ(Math.PI / 6);
@@ -240,11 +306,14 @@ export function createTiles(scene: THREE.Scene, events: { cracked(at: THREE.Vect
   }, events);
 
   return {
-    update(states: ArrayLike<number>, kinds: ArrayLike<number>, round: number, view: TileView, now: number, dt: number) {
+    /** `mode` picks the look for the 81 square tiles: classic Voidfall or Block Party. */
+    update(states: ArrayLike<number>, kinds: ArrayLike<number>, round: number, view: TileView, now: number, dt: number, mode = "classic") {
       const isHex = states.length > CELLS;
-      square.show(!isHex);
+      const isParty = !isHex && mode === "party";
+      square.show(!isHex && !isParty);
+      party.show(isParty);
       hex.show(isHex);
-      (isHex ? hex : square).update(states, kinds, round, view, now, dt);
+      (isHex ? hex : isParty ? party : square).update(states, kinds, round, view, now, dt);
     },
   };
 }

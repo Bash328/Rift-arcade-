@@ -841,6 +841,21 @@ button.btn {
 
 /* ---------- Mode banner: what this round is, for the first few seconds ---------- */
 
+/* Block Party: the called colour and its countdown, in the colour that was called. */
+.callout {
+  position: absolute; inset: 14% auto auto 50%; translate: -50% 0; z-index: 24;
+  display: flex; align-items: center; gap: 0.7rem; padding: 0.4rem 1.1rem;
+  background: #050109dd; border: 3px solid var(--call, #fff); border-radius: 14px;
+  box-shadow: 0 0 0 2px #00000066; pointer-events: none;
+  font: 800 clamp(0.9rem, 3.4vw, 1.5rem)/1 var(--display); letter-spacing: 0.08em; color: #fff;
+}
+.callout[hidden] { display: none; }
+.callout__symbol { font-size: 1.6em; color: var(--call, #fff); line-height: 1; }
+.callout__count { min-width: 2.4ch; text-align: right; color: var(--call, #fff); font-size: 1.5em; }
+.callout.warn { animation: callout-flash 0.25s steps(2) infinite; }
+@keyframes callout-flash { 50% { background: var(--call, #fff); color: #050109; } }
+@media (prefers-reduced-motion: reduce) { .callout.warn { animation: none; } }
+
 .modebanner {
   position: absolute; inset: 22% auto auto 50%; translate: -50% 0; z-index: 24;
   display: grid; justify-items: center; gap: 0.25rem;

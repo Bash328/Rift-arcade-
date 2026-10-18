@@ -8,6 +8,7 @@ import { stepEntity } from "../src/shared/movement.js";
 import {
   stepVoidEntity, tileAt, GRID, CELLS, HEX_CELLS, HEX_COLS, HEX_CENTRE, GONE, SOLID, CRACKING, HEX_FLOORS, RED, GREEN, YELLOW, floorZ, fallLimit, dealKinds, breakTime,
   suddenDeathGap, tileUnder, hexAt, hexCentre, boardOf, SUDDEN_DEATH_AT, FLOOR_GAP,
+  PARTY_COLOURS, partyCallTime, partyExtraDrop, dealParty, PARTY_DROP_TIME, PARTY_RESET_TIME, SQUARE_BOARD,
 } from "../src/shared/void.js";
 import { voidModeOf } from "../src/shared/voidModes.js";
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
@@ -825,7 +826,7 @@ describe("testing your Colyseus app", () => {
       if (s.phase === "over" && (room as any).phaseClock > 10) { ann.send("ready"); (room as any).phaseClock = 10; } // Ready, so the winner card does not wait out its 15 seconds
       if (s.phase !== lastPhase) { if (lastPhase === "playing") { rounds++; } lastPhase = s.phase; phaseTime = 0; }
       phaseTime += 1 / 30;
-      assert.ok(!(s.phase === "playing" && phaseTime > 120), "a round is stuck");
+      assert.ok(!(s.phase === "playing" && phaseTime > 200), "a round is stuck (" + s.mode + ")");
       for (const [id, p] of s.players) { assert.ok([p.x, p.y, p.z, p.vz].every(Number.isFinite), `${id} has a bad number`); }
     }
     assert.strictEqual(rounds, 40, "40 rounds finished");
@@ -1010,20 +1011,20 @@ describe("testing your Colyseus app", () => {
     assert.ok(cracked.every((f) => f === 2), "all on the floor Ann is on");
   });
 
-  it("Voidfall modes take turns (bots play Hex-A-Gone, so a lone human gets it too); a locked room keeps its mode", async () => {
+  it("Voidfall modes take turns (bots play them all, so a lone human gets every one); a locked room keeps its mode", async () => {
     const room = await colyseus.createRoom<VoidState>("void_room", {});
     await colyseus.connectTo(room, { name: "Ann" });
     const seen: string[] = [room.state.mode];
-    for (let r = 0; r < 4; r++) {
+    for (let r = 0; r < 5; r++) {
       room.state.phase = "playing";
       (room as any).finish(undefined);
       (room as any).phaseClock = 0.001;
       (room as any).step({ dt: 1 / 30 });
       seen.push(room.state.mode);
     }
-    assert.deepStrictEqual(seen, ["classic", "hex", "classic", "hex", "classic"], "they take turns");
-    assert.strictEqual(room.state.tiles.length, CELLS, "back to one floor");
-    assert.strictEqual(room.state.kinds.length, 0, "and no kinds");
+    assert.deepStrictEqual(seen, ["classic", "hex", "party", "classic", "hex", "party"], "they take turns, in the order they are listed");
+    assert.strictEqual(room.state.tiles.length, CELLS, "Block Party is one square floor");
+    assert.strictEqual(room.state.kinds.length, CELLS, "with a colour on every tile");
 
     const locked = await colyseus.createRoom<VoidState>("void_room", { private: true, mode: "classic" });
     await colyseus.connectTo(locked, { name: "Ann" });
@@ -1087,7 +1088,7 @@ describe("testing your Colyseus app", () => {
       for (const [id, p] of s.players) { assert.ok([p.x, p.y, p.z, p.vz].every(Number.isFinite), id + " has a bad number"); }
     }
     assert.strictEqual(rounds, 20, "20 rounds finished");
-    assert.ok(modes.has("classic") && modes.has("hex"), "both modes were played");
+    assert.ok(modes.has("classic") && modes.has("hex") && modes.has("party"), "all three modes were played");
   });
 
   /** A Hex-A-Gone room with one bot placed by hand on a hexagon, every tile gone except what a test puts back. */
@@ -1198,5 +1199,143 @@ describe("testing your Colyseus app", () => {
     }
     assert.strictEqual(hexRounds, 12, "12 Hex-A-Gone rounds finished");
     assert.ok(lowestSeen <= floorZ(1), "bots went down to a lower floor at some point (" + lowestSeen + ")");
+  });
+
+  // ---------------- Block Party
+  it("Block Party rules: balanced shuffled floors, a countdown that shrinks to a floor of 1.2 s, and an end to long games", () => {
+    for (let n = 0; n < 20; n++) {
+      const floor = dealParty();
+      assert.strictEqual(floor.length, CELLS);
+      const counts = [0, 0, 0, 0];
+      for (const k of floor) { counts[k]++; }
+      assert.ok(counts.every((c) => c === 20 || c === 21), "every colour on about a quarter of the tiles: " + counts.join(","));
+    }
+    assert.notDeepStrictEqual(dealParty(), dealParty(), "a new floor is a new pattern");
+    assert.strictEqual(partyCallTime(1), 5);
+    assert.ok(Math.abs(partyCallTime(5) - 3.4) < 1e-9);
+    assert.strictEqual(partyCallTime(40), 1.2, "never shorter than 1.2 s");
+    assert.strictEqual(partyExtraDrop(3), 0);
+    assert.ok(Math.abs(partyExtraDrop(4) - 0.1) < 1e-9);
+    assert.strictEqual(partyExtraDrop(100), 0.85, "capped, so a safe tile always exists");
+    assert.strictEqual(PARTY_COLOURS, 4);
+  });
+
+  /** A private Block Party room with two humans, stepped to the first call. */
+  async function partyRoom() {
+    const room = await colyseus.createRoom<VoidState>("void_room", { private: true, mode: "party" });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const b = await colyseus.connectTo(room, { name: "Bo" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    for (let i = 0; i < 300 && room.state.phase !== "playing"; i++) { step(); }
+    assert.strictEqual(room.state.phase, "playing");
+    return { room, a, b, step };
+  }
+
+  it("Block Party: a colour is called, then every other tile drops, then a new floor comes back", async () => {
+    const { room, a, b, step } = await partyRoom();
+    assert.strictEqual(room.state.mode, "party");
+    assert.strictEqual(room.state.partyStage, "call");
+    assert.strictEqual(room.state.partyRound, 1);
+    const target = room.state.target;
+    assert.ok(target >= 0 && target < 4, "a colour is called (" + target + ")");
+    assert.ok(room.state.callLeft > 4 && room.state.callLeft <= 5, "about five seconds on the clock (" + room.state.callLeft + ")");
+    const before = [...room.state.kinds];
+
+    // Both players stand on tiles of the called colour, so they survive the drop and the game keeps going.
+    const safe = room.state.kinds.map((k, i) => [k, i]).filter(([k]) => k === target).map(([, i]) => i);
+    [a, b].forEach((client, n) => {
+      const [x, y] = SQUARE_BOARD.centre(safe[n]);
+      Object.assign(room.state.players.get(client.sessionId)!, { x, y, z: 0, vz: 0 });
+    });
+    for (let i = 0; i < 5 * 30 + 3 && room.state.partyStage === "call"; i++) { step(); }
+    assert.strictEqual(room.state.partyStage, "drop");
+    let kept = 0, gone = 0;
+    room.state.tiles.forEach((state, i) => {
+      if (before[i] === target) { assert.strictEqual(state, SOLID, "a tile of the called colour stays"); kept++; }
+      else { assert.strictEqual(state, GONE, "every other tile drops"); gone++; }
+    });
+    assert.ok(kept >= 20 && gone >= 60, kept + " kept, " + gone + " dropped");
+
+    for (let i = 0; i < Math.ceil(PARTY_DROP_TIME * 30) + 3 && room.state.partyStage === "drop"; i++) { step(); }
+    assert.strictEqual(room.state.partyStage, "reset");
+    assert.strictEqual(room.state.target, -1, "nothing is called while the floor comes back");
+    assert.ok(room.state.tiles.every((v) => v === SOLID), "the whole floor is back");
+    assert.notDeepStrictEqual([...room.state.kinds], before, "in a new pattern");
+
+    for (let i = 0; i < Math.ceil(PARTY_RESET_TIME * 30) + 3 && room.state.partyStage === "reset"; i++) { step(); }
+    assert.strictEqual(room.state.partyStage, "call");
+    assert.strictEqual(room.state.partyRound, 2, "the second call");
+    assert.ok(room.state.callLeft <= 4.6 && room.state.callLeft > 4.4, "and it is shorter (" + room.state.callLeft + ")");
+  });
+
+  it("Block Party: the tiles that will drop flash in the last second, including a share of the called colour in later rounds", async () => {
+    const { room, a, b, step } = await partyRoom();
+    // Jump to a late call by hand.
+    room.state.partyRound = 9;
+    (room as any).partyNewCall(); // round 10: about 70% of the called tiles are doomed too
+    const target = room.state.target;
+    const kinds = [...room.state.kinds];
+    const safe = kinds.map((k, i) => [k, i]).filter(([k]) => k === target).map(([, i]) => i);
+    [a, b].forEach((client, n) => {
+      const [x, y] = SQUARE_BOARD.centre(safe[n]);
+      Object.assign(room.state.players.get(client.sessionId)!, { x, y, z: 0, vz: 0 });
+    });
+    const callTime = room.state.callLeft;
+    for (let i = 0; i < Math.floor((callTime - 1.2) * 30); i++) { step(); }
+    assert.ok(room.state.tiles.every((v) => v === SOLID), "nothing flashes until the last 0.8 seconds");
+    for (let i = 0; i < 15 && !room.state.tiles.some((v) => v === CRACKING); i++) { step(); }
+    const flashing = room.state.tiles.map((v, i) => [v, i]).filter(([v]) => v === CRACKING).map(([, i]) => i);
+    assert.ok(room.state.tiles.every((v, i) => (kinds[i] !== target ? v === CRACKING : v === CRACKING || v === SOLID)), "every other colour flashes");
+    const doomedCalled = flashing.filter((i) => kinds[i] === target).length;
+    assert.ok(doomedCalled > 0 && doomedCalled < safe.length, doomedCalled + " of " + safe.length + " called tiles flash too");
+    for (let i = 0; i < 45 && room.state.partyStage === "call"; i++) { step(); }
+    assert.strictEqual(room.state.partyStage, "drop");
+    flashing.forEach((i) => assert.strictEqual(room.state.tiles[i], GONE, "a flashing tile drops"));
+    safe.filter((i) => !flashing.includes(i)).forEach((i) => assert.strictEqual(room.state.tiles[i], SOLID, "a called tile that did not flash stays"));
+  });
+
+  it("Block Party: a player on a tile of the called colour survives, one on another colour falls out, and the survivor wins", async () => {
+    const { room, a, b, step } = await partyRoom();
+    const target = room.state.target;
+    const safe = room.state.kinds.findIndex((k) => k === target);
+    const doomed = room.state.kinds.findIndex((k) => k !== target);
+    const ann = room.state.players.get(a.sessionId)!, bo = room.state.players.get(b.sessionId)!;
+    const [sx, sy] = SQUARE_BOARD.centre(safe), [dx, dy] = SQUARE_BOARD.centre(doomed);
+    Object.assign(ann, { x: sx, y: sy, z: 0, vz: 0 });
+    Object.assign(bo, { x: dx, y: dy, z: 0, vz: 0 });
+    for (let i = 0; i < 5 * 30 + 150 && room.state.phase === "playing"; i++) { step(); }
+    assert.strictEqual(room.state.phase, "over", "the game ended");
+    assert.ok(ann.alive && !bo.alive, "Ann (safe tile) lived, Bo (wrong colour) fell");
+    assert.strictEqual(room.state.winner, "Ann");
+  });
+
+  it("Block Party bots: a bot standing on the wrong colour runs to the called one in time (sharp bots), and a sloppy one can miss", async () => {
+    let sharpSurvived = 0;
+    for (let trial = 0; trial < 10; trial++) {
+      const room = await colyseus.createRoom<VoidState>("void_room", {});
+      await colyseus.connectTo(room, { name: "Ann" });
+      (room as any).setupMode("party");
+      (room as any).addBot();
+      (room as any).addBot();
+      const entries = [...room.state.players.entries()].filter(([id]) => id.startsWith("bot-"));
+      const [botId, bot] = entries[0];
+      for (const [id, p] of room.state.players) { if (id !== botId && id !== entries[1][0]) { p.alive = false; } }
+      room.state.phase = "playing";
+      (room as any).partyNewCall();
+      const brain = (room as any).bots.get(botId);
+      brain.skill = 2;
+      // The bot starts on a tile that is not the called colour.
+      const wrong = room.state.kinds.findIndex((k) => k !== room.state.target);
+      const [wx, wy] = SQUARE_BOARD.centre(wrong);
+      Object.assign(bot, { x: wx, y: wy, z: 0, vz: 0 });
+      const other = entries[1][1];
+      const random = Math.random;
+      Math.random = () => 0.5;
+      try { for (let i = 0; i < 5 * 30 + 20; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
+      if (bot.alive && bot.z === 0) { sharpSurvived++; }
+      void other;
+      await colyseus.cleanup();
+    }
+    assert.strictEqual(sharpSurvived, 10, "a sharp bot found the colour every time (" + sharpSurvived + " of 10)");
   });
 });

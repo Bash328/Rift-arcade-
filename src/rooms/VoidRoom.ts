@@ -7,7 +7,8 @@ import { sanitizeName } from "../shared/names.js";
 import { TICK_RATE, PETS, BOT_NAMES, ROUND_END_PAUSE, READY_LOCK } from "../shared/constants.js";
 import {
   TILE, SOLID, CRACKING, GONE, CRACK_TIME, LAND_GRACE, FLOOR_GAP, SUDDEN_DEATH_AT, VOID_SIZE,
-  boardOf, tileUnder, floorsOf, floorOf, floorZ, fallLimit, dealKinds, breakTime, suddenDeathGap, stepVoidEntity, type VoidInput,
+  boardOf, SQUARE_BOARD, tileUnder, floorsOf, floorOf, floorZ, fallLimit, dealKinds, breakTime, suddenDeathGap, stepVoidEntity, type VoidInput,
+  PARTY_COLOURS, PARTY_DROP_TIME, PARTY_RESET_TIME, PARTY_WARN, partyCallTime, partyExtraDrop, dealParty,
 } from "../shared/void.js";
 import { VOID_MODES, voidModeOf } from "../shared/voidModes.js";
 
@@ -69,6 +70,10 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private breakAt: number[] = [];
   /** Seconds into the round, and the time to the next tile sudden death cracks. */
   private playClock = 0;
+  /** Block Party: seconds left in the current stage of the call. */
+  private partyClock = 0;
+  /** Whether the doomed tiles have been marked (flashing) for the current call. */
+  private partyWarned = false;
   private deathClock = 0;
   /** The mode the host locked for this room, if any. */
   private lockedMode: string | undefined;
@@ -195,6 +200,7 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private botCommand(bot: VoidPlayer, brain: BotBrain, dt: number): VoidInput {
     const s = this.state;
     const skill = SKILLS[brain.skill];
+    if (s.mode === "party") { return this.partyBot(bot, brain, dt); }
     const board = boardOf(s.tiles);
     const floors = floorsOf(s.tiles);
     const here = board.at(bot.x, bot.y);
@@ -308,17 +314,25 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     s.kinds.clear();
     for (let i = 0; i < count; i++) { s.tiles.push(SOLID); }
     this.breakAt = new Array<number>(count).fill(CRACK_TIME);
-    if (mode.floors > 1) {
+    if (mode.id === "hex") {
       dealKinds().forEach((kind, i) => { s.kinds.push(kind); this.breakAt[i] = breakTime(Math.floor(i / mode.cells), kind); });
+    } else if (mode.id === "party") {
+      for (const kind of dealParty()) { s.kinds.push(kind); }
     }
+    s.target = -1; s.callLeft = 0; s.partyStage = ""; s.partyRound = 0;
     this.crack = new Array<number>(count).fill(0);
   }
 
   /** The mode after this one: they take turns, but Hex-A-Gone needs enough humans (bots cannot play it). A host's lock wins. */
   private pickMode(): string {
     if (this.lockedMode) { return this.lockedMode; }
-    const next = this.state.mode === "classic" ? "hex" : "classic";
-    return voidModeOf(next).minHumans > this.humans() ? "classic" : next;
+    const order = VOID_MODES.map((m) => m.id);
+    const at = order.indexOf(this.state.mode);
+    for (let step = 1; step <= order.length; step++) {
+      const next = order[(at + step) % order.length];
+      if (voidModeOf(next).minHumans <= this.humans()) { return next; }
+    }
+    return "classic";
   }
 
   /** Put every living player on an even ring around the middle of the grid. */
@@ -399,6 +413,7 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     this.crack.fill(0);
     this.playClock = 0;
     this.deathClock = 0;
+    if (this.state.mode === "party") { this.state.partyRound = 0; this.partyNewCall(); }
     this.state.phase = "playing";
     this.state.alive = [...this.state.players.values()].filter((p) => p.alive).length;
   }
@@ -406,17 +421,21 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private play(dt: number) {
     const s = this.state;
 
-    // A tile cracks the moment someone is standing on it (on whichever floor)...
-    for (const p of s.players.values()) {
-      if (!p.alive) { continue; }
-      const idx = tileUnder(p, s.tiles);
-      if (idx >= 0 && s.tiles[idx] === SOLID) { s.tiles[idx] = CRACKING; this.crack[idx] = this.breakAt[idx]; }
-    }
-    // ...and drops once its timer runs out.
-    for (let i = 0; i < s.tiles.length; i++) {
-      if (s.tiles[i] !== CRACKING) { continue; }
-      this.crack[i] -= dt;
-      if (this.crack[i] <= 0) { s.tiles[i] = GONE; }
+    if (s.mode === "party") {
+      this.partyTick(dt);
+    } else {
+      // A tile cracks the moment someone is standing on it (on whichever floor)...
+      for (const p of s.players.values()) {
+        if (!p.alive) { continue; }
+        const idx = tileUnder(p, s.tiles);
+        if (idx >= 0 && s.tiles[idx] === SOLID) { s.tiles[idx] = CRACKING; this.crack[idx] = this.breakAt[idx]; }
+      }
+      // ...and drops once its timer runs out.
+      for (let i = 0; i < s.tiles.length; i++) {
+        if (s.tiles[i] !== CRACKING) { continue; }
+        this.crack[i] -= dt;
+        if (this.crack[i] <= 0) { s.tiles[i] = GONE; }
+      }
     }
 
     // Sudden death: after a while tiles start cracking on their own, faster and faster, so a round cannot drag on.
@@ -436,6 +455,83 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     const standing = [...s.players.values()].filter((p) => p.alive);
     s.alive = standing.length;
     if (standing.length <= 1) { this.finish(standing[0]); }
+  }
+
+  /** Block Party: call a new colour (one that is on the floor), with a countdown that shrinks every round. */
+  private partyNewCall() {
+    const s = this.state;
+    s.partyRound++;
+    s.target = Math.floor(Math.random() * PARTY_COLOURS);
+    s.partyStage = "call";
+    this.partyWarned = false;
+    this.partyClock = partyCallTime(s.partyRound);
+    s.callLeft = Math.round(this.partyClock * 10) / 10;
+  }
+
+  /** Block Party: count down the call; then drop every tile that is not the called colour, show the empty floor for a moment, and bring a new one back. */
+  private partyTick(dt: number) {
+    const s = this.state;
+    this.partyClock -= dt;
+    s.callLeft = Math.max(0, Math.round(this.partyClock * 10) / 10);
+    // In the last second the tiles that are going to drop start flashing: every other colour, and a share of the called
+    // one that grows as the game goes on. That share is chosen here, so players can see which called tiles to avoid.
+    if (s.partyStage === "call" && !this.partyWarned && this.partyClock <= PARTY_WARN) {
+      this.partyWarned = true;
+      const extra = partyExtraDrop(s.partyRound);
+      for (let i = 0; i < s.tiles.length; i++) {
+        if (s.tiles[i] === SOLID && (s.kinds[i] !== s.target || Math.random() < extra)) { s.tiles[i] = CRACKING; }
+      }
+    }
+    if (this.partyClock > 0) { return; }
+    if (s.partyStage === "call") {
+      for (let i = 0; i < s.tiles.length; i++) { if (s.tiles[i] === CRACKING) { s.tiles[i] = GONE; } }
+      s.partyStage = "drop";
+      this.partyClock = PARTY_DROP_TIME;
+    } else if (s.partyStage === "drop") {
+      // A new floor, in a new pattern, while nobody is called yet.
+      dealParty().forEach((kind, i) => { s.kinds[i] = kind; s.tiles[i] = SOLID; });
+      s.target = -1;
+      s.partyStage = "reset";
+      this.partyClock = PARTY_RESET_TIME;
+    } else {
+      this.partyNewCall();
+    }
+  }
+
+  /**
+   * What a Block Party bot presses. When a colour is called it waits out its reaction time (sharp bots are quick, sloppy
+   * ones slow, and now and then one hesitates), then runs to the nearest tile of that colour and stands there.
+   */
+  private partyBot(bot: VoidPlayer, brain: BotBrain, dt: number): VoidInput {
+    const s = this.state;
+    const skill = SKILLS[brain.skill];
+    const here = SQUARE_BOARD.at(bot.x, bot.y);
+    if (here < 0 || bot.z < -LAND_GRACE) { return IDLE; }
+    if (s.partyStage !== "call" || s.target < 0) {
+      // Between calls: stand, and start the reaction timer for the next one.
+      brain.goal = -1;
+      brain.retarget = skill.react[0] + Math.random() * (skill.react[1] - skill.react[0]);
+      return IDLE;
+    }
+    if (brain.goal >= 0 && s.tiles[brain.goal] !== SOLID) { brain.goal = -1; } // the tile it was heading for is about to drop: look again
+    if (brain.goal < 0) {
+      if (s.kinds[here] === s.target && s.tiles[here] === SOLID) { return IDLE; } // already on a safe one
+      brain.retarget -= dt;
+      if (brain.retarget > 0) { return IDLE; }
+      if (Math.random() < skill.slip * 3) { brain.retarget = 0.35; return IDLE; } // a moment's hesitation
+      let best = Infinity;
+      for (let i = 0; i < s.tiles.length; i++) {
+        if (s.kinds[i] !== s.target || s.tiles[i] !== SOLID) { continue; } // not the colour, or flashing (about to drop)
+        const [cx, cy] = SQUARE_BOARD.centre(i);
+        const d = Math.hypot(cx - bot.x, cy - bot.y) + Math.random() * 60 * skill.noise; // sloppy bots do not always find the closest
+        if (d < best) { best = d; brain.goal = i; }
+      }
+      if (brain.goal < 0) { return IDLE; }
+    }
+    const [gx, gy] = SQUARE_BOARD.centre(brain.goal);
+    if (Math.hypot(bot.x - gx, bot.y - gy) < 20) { brain.goal = -1; return IDLE; }
+    const dir = (delta: number) => (Math.abs(delta) > 8 ? Math.sign(delta) : 0);
+    return { moveX: dir(gx - bot.x), moveY: dir(gy - bot.y), jump: 0 };
   }
 
   /** Start a random solid tile cracking, on a floor somebody is on (any floor if everyone is in the air). */

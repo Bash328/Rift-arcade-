@@ -19,6 +19,17 @@ Workflow note: changes are only pushed when asked ("push").
 
 - Tune Hex-A-Gone after playing it (the break times, the colour mix per floor, the 75 second sudden death, the floor gap). The numbers are in `src/shared/void.ts`.
 
+## Block Party (2026-10-18, built, not pushed, not yet seen on a real phone)
+
+- A third Voidfall mode (the modes now take turns in the order classic, Hex-A-Gone, Block Party). One 9x9 square floor painted in four colours, each with its own symbol (circle, triangle, square, star) so it does not rely on colour alone.
+- A colour is called ("STAND ON GREEN" with a countdown shown in that colour). Every tile that is not that colour drops, the empty floor shows for 2 seconds, a new shuffled floor comes back (1 second), and the next colour is called. The countdown starts at 5 seconds and shrinks by 0.4 a round down to 1.2. Last player standing wins.
+- The tiles that are about to drop flash white for the last 0.8 seconds. From call 4 a growing share of the called colour flashes too (10% more each call, up to 85%), so a game always ends and late deaths come from reacting too slowly, not luck.
+- Bots play it: they wait out a reaction time (sharp ones are quick, sloppy ones slow, now and then one hesitates), then run to the nearest safe tile of the called colour, and run again if their tile starts flashing. In a 60 game simulation with four bots a game lasted 46 to 111 seconds (median 64) and the first bot fell around call 9.
+- Plain solid colours and no glow, like Hex-A-Gone. Sound: a tick each second, a crack when the flash starts, a thump at the drop. The tunables are at the top of the Block Party part of `src/shared/void.ts`: `partyCallTime`, `PARTY_WARN`, `PARTY_DROP_TIME`, `partyExtraDrop`.
+- Next (agreed): Loot Loop is folded into Orb Rush. Orbs go into a carried stack, you bank them by stepping into the glowing ring in the middle of the arena, a rival who touches you steals half (2 seconds of protection after), carry cap 15, bots follow the same rules.
+- Also fixed: the red-tile stripes in Hex-A-Gone are now white (they were dark).
+- 75 tests (new: party rules, the call and drop and refill, the flash, a survivor winning, a bot finding the colour).
+
 ## Hex-A-Gone looks like Fall Guys' (2026-10-18, not pushed)
 
 - Real hexagon tiles (9 across, 10 down, every other row shifted half a tile: 90 per floor, 270 in all). Classic Voidfall keeps its 81 squares. The shared code works out which layout it has from the tile count (`boardOf` in `src/shared/void.ts`): finding the tile under a position, a tile's neighbours (6 on a hexagon floor), and which tiles a bot can jump.
@@ -84,8 +95,17 @@ Workflow note: changes are only pushed when asked ("push").
 
 - Falling Hazards mode: parked for now (King of the Hill was tried and removed: no real challenge).
 - Decided against: preset emotes, anonymous profiles and leaderboards.
-- **Load test the live server: started, not finished** (2026-10-18). The script (`npm run loadtest:arcade`) now joins in parallel and reports round-trip time and dropped bots. Results from this PC (upload link about 0.83 Mbit/s): 48 Cube Tag bots clean (31 updates a second each, none dropped), 40 Voidfall bots clean; above that the PC's own upload is the limit (a bot uploads 30 inputs a second: 96 bots need about 1.7 Mbit/s), so round-trip time ballooned and joins failed, which says nothing about the server. For comparison the same test against a local copy of the production server: 192 bots used 22% of one CPU core with 3 ms round trips.
-  - To finish: (1) set `METRICS_TOKEN=<secret>` in `ecosystem.config.cjs` on the server and restart (`/metrics` is off today: it returns 404), then run the test with `--token <secret>` to read the server's CPU and event-loop delay while 48 bots play, and extrapolate; or (2) run the script from a machine with a fast upload (a cloud VM near the server) to push to hundreds of bots.
+- **Load test of the live server (2026-10-18): done as far as this PC allows.** The server runs one Node process on one core, and `/metrics` is on (token set in the server's shell; `pm2 startOrReload ecosystem.config.cjs --update-env` with the capital O).
+  - Server CPU, read from the server itself: 48 Cube Tag bots used 23% of one core, 72 used 31%, 40 Voidfall bots used 24%. Event-loop delay stayed at its idle floor (about 20 ms mean, 22 ms p99), so there was no lag at any of these loads.
+  - From that: about 0.45% of a core per Cube Tag player and 0.6% per Voidfall player, so roughly 150 Cube Tag players or 110 Voidfall players at 70% of the core, and one core is full at about 220 (Cube Tag) or 165 (Voidfall). Outbound traffic is about 15 kbit/s per player (150 players is roughly 2.2 Mbit/s). These are extrapolations from 40 to 72 bots, not measured.
+  - Not measured: anything past 72 bots. This PC uploads only about 0.83 Mbit/s and each bot uploads 30 inputs a second, so at 96 bots it dropped 32 bots and was slow to join; the server's CPU and event loop were fine, so that was the link, not the server.
+  - To check the extrapolation, run the script from a machine with a fast upload (a cloud VM) up to about 150 Cube Tag bots and watch `--token` CPU. More than one core needs Redis and a proxy (see the note in `ecosystem.config.cjs`).
+
+## Cloudflare (2026-10-18)
+
+- The domain is on Cloudflare (nameservers dawn and andronicus; requests are answered from the Johannesburg edge). Checked: WebSockets work through it (Cube Tag and Voidfall, 24 bots each, about 25 ms round trip), scripts and sounds are cached at the edge, the home page's first byte takes 0.1 s.
+- **To do in the Cloudflare dashboard:** the 3D models (`/models/*.glb`, 1.7 MB) are not cached at the edge, because Cloudflare does not cache `.glb` by default (`cf-cache-status: DYNAMIC`). Caching, Cache Rules, create a rule: when URI Path starts with `/models/`, then Eligible for cache, Edge TTL "Use cache-control header if present". Check with `curl -sI https://rift-arcade.online/models/animal-cat.glb` twice: the second should say HIT.
+- Visitors now reach the server through Cloudflare, so the server sees Cloudflare's addresses, not theirs (nothing in the code uses addresses).
 
 ## Check on real devices
 

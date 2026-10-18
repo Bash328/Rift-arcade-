@@ -31,6 +31,8 @@ const client = new Client(url);
 let bytes = 0;
 let patches = 0;
 let dropped = 0;
+/** Bots that could not join, by the reason the network gave. */
+const failedJoins = new Map<string, number>();
 /** Round-trip times (ms) of the pings every bot sends every 2 seconds: the first number to climb when the server struggles. */
 const pings: number[] = [];
 const bots: { input: any; dir: [number, number]; jumpUntil: number }[] = [];
@@ -57,15 +59,23 @@ async function metrics() {
 console.log(`Joining ${rooms} x ${players} bots (${game}) at ${url} ...`);
 /** Run joins a few at a time: over a slow link one after another would take minutes. */
 async function inBatches(tasks: (() => Promise<unknown>)[], size: number) {
-  for (let i = 0; i < tasks.length; i += size) { await Promise.all(tasks.slice(i, i + size).map((task) => task())); }
+  for (let i = 0; i < tasks.length; i += size) {
+    await Promise.all(tasks.slice(i, i + size).map(async (task) => {
+      try { await task(); } catch (e: any) {
+        const why = String(e?.cause?.code ?? e?.code ?? e?.message ?? e);
+        failedJoins.set(why, (failedJoins.get(why) ?? 0) + 1);
+      }
+    }));
+  }
 }
-const hosts: any[] = [];
+const hosts: (any | undefined)[] = [];
 await inBatches(Array.from({ length: rooms }, (_, r) => async () => {
   hosts[r] = await spawnBot(() => client.create(game, { name: `bot${r}-0`, private: true }));
 }), 8);
-await inBatches(hosts.flatMap((host, r) => Array.from({ length: players - 1 }, (_, p) => async () => {
+await inBatches(hosts.flatMap((host, r) => (host ? Array.from({ length: players - 1 }, (_, p) => async () => {
   await spawnBot(() => client.joinById(host.roomId, { name: `bot${r}-${p + 1}` }));
-})), 12);
+}) : [])), 12);
+if (failedJoins.size) { console.log(`could not join: ${[...failedJoins].map(([why, n]) => `${n} x ${why}`).join(", ")}`); }
 console.log(`${bots.length} bots in. Playing for ${seconds}s ...`);
 
 await metrics(); // resets the server's event-loop window

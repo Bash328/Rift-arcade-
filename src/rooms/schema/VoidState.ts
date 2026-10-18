@@ -31,6 +31,11 @@ export const VoidState = schema({
   modeLocked: t.boolean(),
   /** Whole seconds until the next round starts while the winner banner shows, else 0. */
   nextIn: t.number(),
+  /** Block Party: the called colour (-1 when none), seconds left before the drop, which stage the floor is in ("call", "drop" or "reset"), and the call number. */
+  target: t.number(),
+  callLeft: t.number(),
+  partyStage: t.string(),
+  partyRound: t.number(),
   /** "waiting" | "countdown" | "playing" | "over" */
   phase: t.string(),
   /** Whole seconds left in the countdown. */

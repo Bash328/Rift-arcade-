@@ -5,8 +5,8 @@ import type { default as server } from "../app.config.js";
 import type { MoveInput } from "../rooms/schema/MyRoomState.js";
 import type { VoidRoom } from "../rooms/VoidRoom.js";
 import { PLAYER_HALF } from "../shared/constants.js";
-import { stepVoidEntity, VOID_SIZE, SOLID, CELLS, FLOOR_GAP, floorsOf, floorZ } from "../shared/void.js";
-import { VOID_MODES, voidModeOf } from "../shared/voidModes.js";
+import { stepVoidEntity, VOID_SIZE, SOLID, CELLS, FLOOR_GAP, PARTY_WARN, floorsOf, floorZ } from "../shared/void.js";
+import { VOID_MODES, PARTY_LOOK, voidModeOf } from "../shared/voidModes.js";
 import {
   createStage, createParticles, createControls,
   runLobby, showRoomTag, leaveToLobby, wireBack, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, gameReady, showFatal, SHADOW_MAP,
@@ -29,6 +29,10 @@ const roundReadyCountEl = document.getElementById("roundReadyCount")!;
 const modeBannerEl = document.getElementById("modeBanner")!;
 const modeNameEl = document.getElementById("modeName")!;
 const modeBlurbEl = document.getElementById("modeBlurb")!;
+const calloutEl = document.getElementById("callout")!;
+const calloutSymbolEl = document.getElementById("calloutSymbol")!;
+const calloutNameEl = document.getElementById("calloutName")!;
+const calloutCountEl = document.getElementById("calloutCount")!;
 
 const client = new ColyseusSDK<typeof server>(
   `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`
@@ -158,6 +162,10 @@ async function main() {
   let prevCountdown = -1;
   let prevAlive = true;
   let shownMode = "";
+  /** Block Party: the whole second of the countdown last heard, the stage last seen, and whether the warning flash has sounded this call. */
+  let prevCallSecond = -1;
+  let prevStage = "";
+  let warned = false;
 
   /** Play a sound that fades with distance from my pet, so far-off tiles stay quiet. */
   const hear = (name: Sfx, at: THREE.Vector3) => {
@@ -166,8 +174,9 @@ async function main() {
     const volume = Math.max(0, 1 - Math.hypot(me.x - at.x, me.z - at.z) / 500);
     if (volume > 0.05) { audio.play(name, volume * 0.8, 0.9 + Math.random() * 0.2); }
   };
-  tileEvents.cracked = (at) => hear("crack", at);
+  tileEvents.cracked = (at) => { if (shownMode !== "party") { hear("crack", at); } }; // Block Party flashes dozens at once: one sound for the lot instead
   tileEvents.dropped = (at) => {
+    if (shownMode === "party") { return; }
     hear("drop", at);
     for (let k = 0; k < 6; k++) {
       const v = new THREE.Vector3((Math.random() - 0.5) * 200, Math.random() * 150, (Math.random() - 0.5) * 200);
@@ -225,11 +234,11 @@ async function main() {
       input.send();
     }
 
-    const { phase, countdown, alive, winner, mode, tiles: tileStates, kinds } = room.state;
+    const { phase, countdown, alive, winner, mode, tiles: tileStates, kinds, target, callLeft, partyStage, partyRound } = room.state;
     const me = room.state.players.get(room.sessionId);
     const floors = floorsOf(tileStates);
     // Hex-A-Gone has plain, solid colours that must read clearly, so no glow there; classic keeps its neon.
-    if (mode !== shownMode) { shownMode = mode; setGlow(mode !== "hex"); }
+    if (mode !== shownMode) { shownMode = mode; setGlow(mode === "classic"); }
     // Which floor I am on (the nearest surface to my height), for the camera and for fading the floors above me.
     const myZ = me ? predict.value(me, "z") : 0;
     const myFloor = Math.min(floors - 1, Math.max(0, Math.round(-myZ / FLOOR_GAP)));
@@ -237,8 +246,26 @@ async function main() {
     tiles.update(
       tileStates, kinds, room.state.round,
       { me: watching || !me ? null : { floor: myFloor } },
-      now, dt,
+      now, dt, mode,
     );
+
+    // Block Party: the called colour and the countdown, with a tick each second, a warning when the doomed tiles start flashing, and one thump when they drop.
+    const calling = mode === "party" && phase === "playing" && partyStage === "call" && target >= 0;
+    calloutEl.hidden = !calling;
+    if (calling) {
+      const look = PARTY_LOOK[target];
+      calloutSymbolEl.textContent = look.symbol;
+      calloutNameEl.textContent = `STAND ON ${look.name}`;
+      calloutCountEl.textContent = callLeft > 3 ? String(Math.ceil(callLeft)) : callLeft.toFixed(1);
+      calloutEl.style.setProperty("--call", `#${look.colour.toString(16).padStart(6, "0")}`);
+      calloutEl.classList.toggle("warn", callLeft <= PARTY_WARN);
+      const second = Math.ceil(callLeft);
+      if (second !== prevCallSecond && callLeft > PARTY_WARN) { audio.play("tick", 0.7); }
+      prevCallSecond = second;
+      if (callLeft <= PARTY_WARN && !warned) { warned = true; audio.play("crack", 0.9); }
+    } else { prevCallSecond = -1; warned = false; }
+    if (mode === "party" && partyStage === "drop" && prevStage !== "drop") { audio.play("drop", 1); }
+    prevStage = mode === "party" ? partyStage : "";
 
     for (const [sessionId, player] of room.state.players) {
       const avatar = avatars.get(sessionId);
@@ -303,7 +330,7 @@ async function main() {
       phase === "over" ? "" :
       phase === "waiting" ? "Waiting for another player..." :
       phase === "countdown" ? `${voidModeOf(mode).name} - get ready... ${countdown}` :
-      me?.alive ? `${alive} left${where} - keep moving!` : `You fell! Watching - ${alive} left`;
+      me?.alive ? (mode === "party" ? `Block Party - call ${partyRound} - ${alive} left` : `${alive} left${where} - keep moving!`) : `You fell! Watching - ${alive} left`;
     composer.render();
 
     requestAnimationFrame(frame);
