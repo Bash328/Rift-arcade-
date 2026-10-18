@@ -59,6 +59,13 @@ from the dev server.
 
 Set them in `ecosystem.config.cjs` under `env`, then `pm2 startOrReload ecosystem.config.cjs --update-env`.
 
+`METRICS_TOKEN` is the exception: keep the secret out of git. `ecosystem.config.cjs` passes it through from the server's own
+shell, so set it there when you start the app:
+
+    METRICS_TOKEN=<your secret> pm2 startOrReload ecosystem.config.cjs --update-env
+
+Check it with `curl -H "x-metrics-token: <your secret>" https://rift-arcade.online/metrics` (without the header it is a 404).
+
 ## Measuring
 
 - Phone or desktop: add `?debug` to a game's address (`/cube-tag/?debug`) for frame time,

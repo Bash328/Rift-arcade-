@@ -14,7 +14,8 @@ module.exports = {
     watch: false,
     instances: 1,
     exec_mode: "fork",
-    env: { NODE_ENV: "production" },
+    // METRICS_TOKEN is read from the server's own environment (never commit it): see DEPLOY.md, "Optional settings".
+    env: { NODE_ENV: "production", ...(process.env.METRICS_TOKEN ? { METRICS_TOKEN: process.env.METRICS_TOKEN } : {}) },
     max_memory_restart: "512M",
   }],
 };

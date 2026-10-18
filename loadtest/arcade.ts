@@ -30,6 +30,9 @@ const client = new Client(url);
 
 let bytes = 0;
 let patches = 0;
+let dropped = 0;
+/** Round-trip times (ms) of the pings every bot sends every 2 seconds: the first number to climb when the server struggles. */
+const pings: number[] = [];
 const bots: { input: any; dir: [number, number]; jumpUntil: number }[] = [];
 
 async function spawnBot(join: () => Promise<any>) {
@@ -40,6 +43,8 @@ async function spawnBot(join: () => Promise<any>) {
     patches++;
   });
   bots.push({ input: room.input({ mode: "reliable" }), dir: [0, 0], jumpUntil: 0 });
+  room.onLeave(() => { dropped++; });
+  setInterval(() => { try { room.ping((ms: number) => pings.push(ms)); } catch { /* already gone */ } }, 2000);
   return room;
 }
 
@@ -50,12 +55,17 @@ async function metrics() {
 }
 
 console.log(`Joining ${rooms} x ${players} bots (${game}) at ${url} ...`);
-for (let r = 0; r < rooms; r++) {
-  const host = await spawnBot(() => client.create(game, { name: `bot${r}-0`, private: true }));
-  for (let p = 1; p < players; p++) {
-    await spawnBot(() => client.joinById(host.roomId, { name: `bot${r}-${p}` }));
-  }
+/** Run joins a few at a time: over a slow link one after another would take minutes. */
+async function inBatches(tasks: (() => Promise<unknown>)[], size: number) {
+  for (let i = 0; i < tasks.length; i += size) { await Promise.all(tasks.slice(i, i + size).map((task) => task())); }
 }
+const hosts: any[] = [];
+await inBatches(Array.from({ length: rooms }, (_, r) => async () => {
+  hosts[r] = await spawnBot(() => client.create(game, { name: `bot${r}-0`, private: true }));
+}), 8);
+await inBatches(hosts.flatMap((host, r) => Array.from({ length: players - 1 }, (_, p) => async () => {
+  await spawnBot(() => client.joinById(host.roomId, { name: `bot${r}-${p + 1}` }));
+})), 12);
 console.log(`${bots.length} bots in. Playing for ${seconds}s ...`);
 
 await metrics(); // resets the server's event-loop window
@@ -84,6 +94,9 @@ console.log("\n--- result ---");
 console.log(`bots: ${bots.length}   duration: ${elapsed.toFixed(0)}s`);
 console.log(`received per bot: ${kbPerBotPerSec.toFixed(1)} KB/s (${(patches / bots.length / elapsed).toFixed(0)} messages/s)`);
 console.log(`server sends in total: ${(kbPerBotPerSec * bots.length * 8).toFixed(0)} kbit/s`);
+pings.sort((a, b) => a - b);
+const at = (q: number) => (pings.length ? pings[Math.min(pings.length - 1, Math.floor(pings.length * q))].toFixed(0) : "n/a");
+console.log(`round trip: median ${at(0.5)} ms, p95 ${at(0.95)} ms, worst ${at(1)} ms (${pings.length} pings)   bots dropped by the server: ${dropped}`);
 if (before && after) {
   const cpu = (after.cpuUserSec + after.cpuSystemSec) - (before.cpuUserSec + before.cpuSystemSec);
   console.log(`server CPU: ${cpu.toFixed(2)}s over ${elapsed.toFixed(0)}s = ${(cpu / elapsed * 100).toFixed(1)}% of one core`);

@@ -84,7 +84,8 @@ Workflow note: changes are only pushed when asked ("push").
 
 - Falling Hazards mode: parked for now (King of the Hill was tried and removed: no real challenge).
 - Decided against: preset emotes, anonymous profiles and leaderboards.
-- Load test the live server (`npm run loadtest:arcade`) to find the real capacity; a PC or phone-hotspot run is fine, a result limited by the home connection says so.
+- **Load test the live server: started, not finished** (2026-10-18). The script (`npm run loadtest:arcade`) now joins in parallel and reports round-trip time and dropped bots. Results from this PC (upload link about 0.83 Mbit/s): 48 Cube Tag bots clean (31 updates a second each, none dropped), 40 Voidfall bots clean; above that the PC's own upload is the limit (a bot uploads 30 inputs a second: 96 bots need about 1.7 Mbit/s), so round-trip time ballooned and joins failed, which says nothing about the server. For comparison the same test against a local copy of the production server: 192 bots used 22% of one CPU core with 3 ms round trips.
+  - To finish: (1) set `METRICS_TOKEN=<secret>` in `ecosystem.config.cjs` on the server and restart (`/metrics` is off today: it returns 404), then run the test with `--token <secret>` to read the server's CPU and event-loop delay while 48 bots play, and extrapolate; or (2) run the script from a machine with a fast upload (a cloud VM near the server) to push to hundreds of bots.
 
 ## Check on real devices
 
