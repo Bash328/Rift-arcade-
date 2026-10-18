@@ -1,5 +1,7 @@
 // Voidfall game modes. Plain data that both the server (rules) and the browser (names, banners) read.
 
+import { CELLS, HEX_CELLS } from "./void.js";
+
 export interface VoidMode {
   id: string;
   name: string;
@@ -9,18 +11,19 @@ export interface VoidMode {
   rules: string;
   /** The mode only comes up in the rotation when at least this many humans are in the room. */
   minHumans: number;
-  /** Floors of tiles. */
+  /** Floors of tiles, and tiles on each (squares in classic, hexagons in Hex-A-Gone). */
   floors: number;
+  cells: number;
 }
 
 export const VOID_MODES: VoidMode[] = [
   {
-    id: "classic", name: "Voidfall", minHumans: 1, floors: 1,
+    id: "classic", name: "Voidfall", minHumans: 1, floors: 1, cells: CELLS,
     blurb: "Every tile cracks the moment you land. Keep moving.",
     rules: "Every tile cracks the moment you land on it and drops away a second later, so keep moving and hop across gaps. The last player standing wins.",
   },
   {
-    id: "hex", name: "Hex-A-Gone", minHumans: 1, floors: 3,
+    id: "hex", name: "Hex-A-Gone", minHumans: 1, floors: 3, cells: HEX_CELLS,
     blurb: "Three floors. Green tiles last, red ones go almost at once.",
     rules: "Three floors of tiles. A tile starts breaking when you land on it, and its colour says how fast: green about 2 seconds, yellow about 1, red almost at once. Fall through a gap and you land on the floor below, or you are out if there is no tile there. After a while tiles start cracking on their own. The last player standing wins.",
   },

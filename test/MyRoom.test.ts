@@ -6,7 +6,8 @@ import appConfig from "../src/app.config.js";
 import { MyRoomState, type MoveInput } from "../src/rooms/schema/MyRoomState.js";
 import { stepEntity } from "../src/shared/movement.js";
 import {
-  stepVoidEntity, tileAt, GRID, CELLS, GONE, SOLID, CRACKING, HEX_FLOORS, RED, GREEN, YELLOW, floorZ, fallLimit, dealKinds, breakTime, suddenDeathGap, tileUnder, SUDDEN_DEATH_AT,
+  stepVoidEntity, tileAt, GRID, CELLS, HEX_CELLS, HEX_COLS, HEX_CENTRE, GONE, SOLID, CRACKING, HEX_FLOORS, RED, GREEN, YELLOW, floorZ, fallLimit, dealKinds, breakTime,
+  suddenDeathGap, tileUnder, hexAt, hexCentre, boardOf, SUDDEN_DEATH_AT, FLOOR_GAP,
 } from "../src/shared/void.js";
 import { voidModeOf } from "../src/shared/voidModes.js";
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
@@ -765,7 +766,10 @@ describe("testing your Colyseus app", () => {
     Object.assign(b, { x: 750, y: 750, z: 0, vz: 0 });
     (room as any).bots.get([...room.state.players.entries()].find(([, p]) => p === a)![0]).skill = 2;
     room.state.phase = "playing";
-    for (let i = 0; i < 50; i++) { (room as any).step({ dt: 1 / 30 }); }
+    // A sharp bot hesitates at the worst moment about once in 200 decisions: pin the dice so this test is about the jump, not luck.
+    const random = Math.random;
+    Math.random = () => 0.5;
+    try { for (let i = 0; i < 50; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
     assert.ok(a.alive, "bot A is still alive");
     assert.strictEqual(tileAt(a.x, a.y), at(4, 4), "bot A crossed the gap to (4,4)");
   });
@@ -865,44 +869,66 @@ describe("testing your Colyseus app", () => {
   });
 
   // ---------------- Hex-A-Gone
-  const hexTiles = (fill = SOLID) => new Array<number>(CELLS * HEX_FLOORS).fill(fill);
-  const standing = (x = 450, y = 450, z = 0) => ({ x, y, vx: 0, vy: 0, z, vz: 0 });
+  const hexTiles = (fill = SOLID) => new Array<number>(HEX_CELLS * HEX_FLOORS).fill(fill);
+  const standing = (x = HEX_CENTRE[0], y = HEX_CENTRE[1], z = 0) => ({ x, y, vx: 0, vy: 0, z, vz: 0 });
   const IDLE = { moveX: 0, moveY: 0, jump: 0 };
+  /** The hexagon whose middle is exactly under the start spot. */
+  const startCell = hexAt(HEX_CENTRE[0], HEX_CENTRE[1]);
+
+  it("hexagon floors: every hexagon is found from its own middle, has six neighbours inside the floor, and the corners agree", () => {
+    for (let i = 0; i < HEX_CELLS; i++) {
+      const [x, y] = hexCentre(i);
+      assert.strictEqual(hexAt(x, y), i, "the middle of hexagon " + i + " is on hexagon " + i);
+      const near = boardOf(hexTiles()).neighbours(i);
+      assert.ok(near.length >= 2 && near.length <= 6, "hexagon " + i + " has " + near.length + " neighbours");
+      for (const j of near) {
+        const [nx, ny] = hexCentre(j);
+        assert.ok(Math.abs(Math.hypot(nx - x, ny - y) - 100) < 1e-6, "neighbours are one tile (100) apart");
+        assert.ok(boardOf(hexTiles()).neighbours(j).includes(i), "neighbours are mutual");
+      }
+    }
+    assert.strictEqual(boardOf(hexTiles()).neighbours(startCell).length, 6, "the middle hexagon has all six");
+    assert.strictEqual(hexAt(-10, 10), -1, "off the floor on the left");
+    assert.strictEqual(hexAt(500, 2000), -1, "off the floor below");
+    // A point just off a hexagon's middle still belongs to it, and the border between two is halfway.
+    const [x, y] = hexCentre(startCell);
+    assert.strictEqual(hexAt(x + 40, y), startCell);
+    assert.strictEqual(hexAt(x + 60, y), boardOf(hexTiles()).at(x + 60, y), "past the border it is the neighbour");
+    assert.notStrictEqual(hexAt(x + 60, y), startCell);
+  });
 
   it("Hex-A-Gone physics: a gap drops you onto the floor below, or out if there is no tile there", () => {
-    const cell = tileAt(450, 450);
     // A tile below the gap: fall from floor 0 and land on floor 1.
     const tiles = hexTiles();
-    tiles[cell] = GONE;
+    tiles[startCell] = GONE;
     const p = standing();
-    for (let i = 0; i < 60; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
+    for (let i = 0; i < 90; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
     assert.strictEqual(p.z, floorZ(1), "landed on floor 1");
     assert.strictEqual(p.vz, 0);
-    assert.strictEqual(tileUnder(p, tiles), CELLS + cell, "standing on the floor 1 tile");
+    assert.strictEqual(tileUnder(p, tiles), HEX_CELLS + startCell, "standing on the floor 1 tile");
     // No tile on floor 1 either: on to floor 2.
-    tiles[CELLS + cell] = GONE;
-    for (let i = 0; i < 60; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
+    tiles[HEX_CELLS + startCell] = GONE;
+    for (let i = 0; i < 90; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
     assert.strictEqual(p.z, floorZ(2), "landed on floor 2");
     // Nothing anywhere below: falls past the limit.
-    tiles[2 * CELLS + cell] = GONE;
-    for (let i = 0; i < 120; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
+    tiles[2 * HEX_CELLS + startCell] = GONE;
+    for (let i = 0; i < 150; i++) { stepVoidEntity(p, IDLE, 1 / 30, tiles); }
     assert.ok(p.z < fallLimit(HEX_FLOORS), "out, below the fall limit (" + p.z.toFixed(0) + ")");
   });
 
   it("Hex-A-Gone physics: a fast fall cannot skip a floor, and steering is full on a lower floor but weak in the air", () => {
     const tiles = hexTiles();
-    const cell = tileAt(450, 450);
-    tiles[cell] = GONE; // only floor 0 is open here
-    const p = standing(450, 450, 0);
-    p.vz = -5000; // far faster than any real fall: one tick covers more than a whole floor gap
+    tiles[startCell] = GONE; // only floor 0 is open here
+    const p = standing();
+    p.vz = -20000; // far faster than any real fall: one tick covers more than a whole floor gap
     stepVoidEntity(p, IDLE, 1 / 30, tiles);
     assert.strictEqual(p.z, floorZ(1), "caught by floor 1 even at that speed");
     // On floor 1 you steer at full speed.
-    const onLower = standing(450, 450, floorZ(1));
+    const onLower = standing(HEX_CENTRE[0], HEX_CENTRE[1], floorZ(1));
     stepVoidEntity(onLower, { moveX: 1, moveY: 0, jump: 0 }, 1 / 30, tiles);
     assert.ok(Math.abs(onLower.vx - PLAYER_SPEED) < 1, "full steering standing on floor 1 (" + onLower.vx + ")");
     // Between floors, falling, you do not.
-    const faller = standing(450, 450, -60);
+    const faller = standing(HEX_CENTRE[0], HEX_CENTRE[1], -60);
     faller.vz = -200;
     stepVoidEntity(faller, { moveX: 1, moveY: 0, jump: 0 }, 1 / 30, tiles);
     assert.ok(faller.vx < PLAYER_SPEED * 0.5, "weak steering while falling (" + faller.vx + ")");
@@ -910,7 +936,7 @@ describe("testing your Colyseus app", () => {
 
   it("Hex-A-Gone physics: a jump from a lower floor cannot reach the floor above", () => {
     const tiles = hexTiles();
-    const p = standing(450, 450, floorZ(1));
+    const p = standing(HEX_CENTRE[0], HEX_CENTRE[1], floorZ(1));
     let highest = p.z;
     for (let i = 0; i < 40; i++) { stepVoidEntity(p, { moveX: 0, moveY: 0, jump: i === 0 ? 1 : 0 }, 1 / 30, tiles); highest = Math.max(highest, p.z); }
     assert.ok(highest > floorZ(1) + 40, "it did jump");
@@ -918,13 +944,21 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(p.z, floorZ(1), "and landed back on floor 1");
   });
 
-  it("Hex-A-Gone tiles: 243 kinds, never red in the middle of the top floor, a nastier mix lower down, faster breaks lower down", () => {
+  it("Hex-A-Gone: the floors are further apart than the camera is high, so the floor you left is out of sight", () => {
+    // The phone camera sits 470 above the player; a floor at least that far above is above the camera.
+    assert.ok(FLOOR_GAP > 470, "floor gap " + FLOOR_GAP);
+  });
+
+  it("Hex-A-Gone tiles: 270 kinds, never red in the middle of the top floor, a nastier mix lower down, faster breaks lower down", () => {
     const share = (floor: number, kind: number, deals: number[][]) =>
-      deals.reduce((n, d) => n + d.slice(floor * CELLS, (floor + 1) * CELLS).filter((k) => k === kind).length, 0) / (deals.length * CELLS);
+      deals.reduce((n, d) => n + d.slice(floor * HEX_CELLS, (floor + 1) * HEX_CELLS).filter((k) => k === kind).length, 0) / (deals.length * HEX_CELLS);
     const deals = Array.from({ length: 200 }, () => dealKinds());
-    assert.strictEqual(deals[0].length, CELLS * HEX_FLOORS);
+    assert.strictEqual(deals[0].length, HEX_CELLS * HEX_FLOORS);
     for (const deal of deals) {
-      for (const j of [3, 4, 5]) { for (const i of [3, 4, 5]) { assert.notStrictEqual(deal[j * GRID + i], RED, "no red under the start ring"); } }
+      for (let i = 0; i < HEX_CELLS; i++) {
+        const [x, y] = hexCentre(i);
+        if (Math.hypot(x - HEX_CENTRE[0], y - HEX_CENTRE[1]) < 170) { assert.notStrictEqual(deal[i], RED, "no red under the start ring"); }
+      }
     }
     const red = [0, 1, 2].map((f) => share(f, RED, deals));
     assert.ok(red[0] < red[1] && red[1] < red[2], "more red lower down: " + red.map((r) => r.toFixed(2)).join(", "));
@@ -940,12 +974,12 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(suddenDeathGap(SUDDEN_DEATH_AT + 500), 0.25);
   });
 
-  it("Hex-A-Gone round: 243 tiles with a kind each, tiles break at their own speed, the room can be locked to it", async () => {
+  it("Hex-A-Gone round: 270 tiles with a kind each, tiles break at their own speed, the room can be locked to it", async () => {
     const room = await colyseus.createRoom<VoidState>("void_room", { private: true, mode: "hex" });
     assert.strictEqual(room.state.mode, "hex");
     assert.ok(room.state.modeLocked);
-    assert.strictEqual(room.state.tiles.length, CELLS * HEX_FLOORS);
-    assert.strictEqual(room.state.kinds.length, CELLS * HEX_FLOORS);
+    assert.strictEqual(room.state.tiles.length, HEX_CELLS * HEX_FLOORS);
+    assert.strictEqual(room.state.kinds.length, HEX_CELLS * HEX_FLOORS);
     const a = await colyseus.connectTo(room, { name: "Ann" });
     await colyseus.connectTo(room, { name: "Bo" });
     const step = () => (room as any).step({ dt: 1 / 30 });
@@ -954,7 +988,7 @@ describe("testing your Colyseus app", () => {
     const me = room.state.players.get(a.sessionId)!;
     for (let i = 0; i < 3; i++) { step(); }
     const idx = tileUnder(me, room.state.tiles);
-    assert.ok(idx >= 0 && idx < CELLS, "Ann is standing on a top-floor tile");
+    assert.ok(idx >= 0 && idx < HEX_CELLS, "Ann is standing on a top-floor tile");
     assert.strictEqual(room.state.tiles[idx], CRACKING, "it started cracking");
     const expected = breakTime(0, room.state.kinds[idx]);
     const left = ((room as any).crack as number[])[idx];
@@ -971,7 +1005,7 @@ describe("testing your Colyseus app", () => {
     const before = [...room.state.tiles].filter((v) => v === CRACKING).length;
     for (let i = 0; i < 20; i++) { (room as any).crackRandomTile(); }
     const cracked: number[] = [];
-    room.state.tiles.forEach((v, i) => { if (v === CRACKING) { cracked.push(Math.floor(i / CELLS)); } });
+    room.state.tiles.forEach((v, i) => { if (v === CRACKING) { cracked.push(Math.floor(i / HEX_CELLS)); } });
     assert.ok(cracked.length > before, "tiles started cracking");
     assert.ok(cracked.every((f) => f === 2), "all on the floor Ann is on");
   });
@@ -1049,15 +1083,15 @@ describe("testing your Colyseus app", () => {
       if (s.phase !== lastPhase) { if (lastPhase === "playing") { rounds++; modes.add(s.mode); } lastPhase = s.phase; phaseTime = 0; }
       phaseTime += 1 / 30;
       assert.ok(!(s.phase === "playing" && phaseTime > 150), "a round is stuck (" + s.mode + ")");
-      assert.strictEqual(s.tiles.length, voidModeOf(s.mode).floors * CELLS, "tiles match the mode");
+      assert.strictEqual(s.tiles.length, voidModeOf(s.mode).floors * voidModeOf(s.mode).cells, "tiles match the mode");
       for (const [id, p] of s.players) { assert.ok([p.x, p.y, p.z, p.vz].every(Number.isFinite), id + " has a bad number"); }
     }
     assert.strictEqual(rounds, 20, "20 rounds finished");
     assert.ok(modes.has("classic") && modes.has("hex"), "both modes were played");
   });
 
-  /** A Hex-A-Gone room with one bot placed by hand, every tile gone except what a test puts back. */
-  async function botOnTile(cell: [number, number], floor = 0) {
+  /** A Hex-A-Gone room with one bot placed by hand on a hexagon, every tile gone except what a test puts back. */
+  async function botOnTile(cell: number, floor = 0) {
     // A public room (private ones send bots home), switched to Hex-A-Gone by hand.
     const room = await colyseus.createRoom<VoidState>("void_room", {});
     const ann = await colyseus.connectTo(room, { name: "Ann" });
@@ -1073,69 +1107,72 @@ describe("testing your Colyseus app", () => {
     for (let i = 0; i < room.state.tiles.length; i++) { room.state.tiles[i] = GONE; }
     const brain = (room as any).bots.get(botId);
     brain.skill = 2;
-    Object.assign(bot, { x: (cell[0] + 0.5) * 100, y: (cell[1] + 0.5) * 100, z: floorZ(floor), vz: 0 });
-    const at = (f: number, x: number, y: number) => f * CELLS + y * GRID + x;
-    const set = (f: number, x: number, y: number, kind: number) => {
-      room.state.tiles[at(f, x, y)] = SOLID;
-      room.state.kinds[at(f, x, y)] = kind;
-      (room as any).breakAt[at(f, x, y)] = breakTime(f, kind);
+    const [bx, by] = hexCentre(cell);
+    Object.assign(bot, { x: bx, y: by, z: floorZ(floor), vz: 0 });
+    const at = (f: number, i: number) => f * HEX_CELLS + i;
+    const set = (f: number, i: number, kind: number) => {
+      room.state.tiles[at(f, i)] = SOLID;
+      room.state.kinds[at(f, i)] = kind;
+      (room as any).breakAt[at(f, i)] = breakTime(f, kind);
     };
     const crackHere = (seconds: number) => {
-      room.state.tiles[at(floor, cell[0], cell[1])] = CRACKING;
-      ((room as any).crack as number[])[at(floor, cell[0], cell[1])] = seconds;
+      room.state.tiles[at(floor, cell)] = CRACKING;
+      ((room as any).crack as number[])[at(floor, cell)] = seconds;
     };
     room.state.phase = "playing";
-    // Keep a second bot alive so the round does not end at once.
+    // Keep a second bot alive, far away and standing, so the round does not end at once.
+    const farCell = 9 * HEX_COLS + 4;
     const other = entries[1][1];
     other.alive = true;
-    Object.assign(other, { x: 850, y: 850, z: 0, vz: 0 });
-    set(0, 8, 8, GREEN);
-    (room as any).breakAt[at(0, 8, 8)] = 99;
-    room.state.tiles[at(0, 8, 8)] = CRACKING;
-    ((room as any).crack as number[])[at(0, 8, 8)] = 99;
+    const [ox, oy] = hexCentre(farCell);
+    Object.assign(other, { x: ox, y: oy, z: 0, vz: 0 });
+    room.state.tiles[at(0, farCell)] = CRACKING;
+    ((room as any).crack as number[])[at(0, farCell)] = 99;
     return { room, bot, set, crackHere, at };
   }
   const run = (room: any, ticks: number) => { for (let i = 0; i < ticks; i++) { room.step({ dt: 1 / 30 }); } };
+  const MIDDLE_CELL = 4 * HEX_COLS + 4;
 
   it("Hex-A-Gone bots: leaving a tile, they pick the lasting green neighbour over a red one", async () => {
     let green = 0, red = 0;
     for (let trial = 0; trial < 12; trial++) {
-      const { room, bot, set, crackHere } = await botOnTile([4, 4]);
-      set(0, 4, 4, YELLOW);
-      set(0, 5, 4, GREEN); // east: green
-      set(0, 3, 4, RED);   // west: red
+      const { room, bot, set, crackHere } = await botOnTile(MIDDLE_CELL);
+      set(0, MIDDLE_CELL, YELLOW);
+      set(0, MIDDLE_CELL + 1, GREEN); // east: green
+      set(0, MIDDLE_CELL - 1, RED);   // west: red
       crackHere(0.3);
       run(room, 25);
-      const cell = tileAt(bot.x, bot.y);
-      if (bot.alive && cell === 4 * GRID + 5) { green++; }
-      if (cell === 4 * GRID + 3) { red++; }
+      const cell = hexAt(bot.x, bot.y);
+      if (bot.alive && cell === MIDDLE_CELL + 1) { green++; }
+      if (cell === MIDDLE_CELL - 1) { red++; }
       await colyseus.cleanup();
     }
     assert.ok(green >= 9 && red <= 2, "green " + green + " times, red " + red + " times out of 12");
   });
 
   it("Hex-A-Gone bots: with nothing left on their floor they drop through a gap onto the floor below and live", async () => {
-    const { room, bot, set, crackHere } = await botOnTile([4, 4]);
-    set(0, 4, 4, YELLOW);
-    set(1, 5, 4, GREEN); // below the gap east of the bot: a solid tile on floor 1
+    const { room, bot, set, crackHere } = await botOnTile(MIDDLE_CELL);
+    set(0, MIDDLE_CELL, YELLOW);
+    set(1, MIDDLE_CELL + 1, GREEN); // below the gap east of the bot: a solid tile on floor 1
     crackHere(0.3);
     const trace: string[] = [];
     // A sharp bot hesitates at the worst moment about once in 200 decisions: pin the dice so this test is about the drop, not luck.
     const random = Math.random;
     Math.random = () => 0.5;
-    try { for (let i = 0; i < 35; i++) { (room as any).step({ dt: 1 / 30 }); if (i % 3 === 0) { trace.push(i + ":x" + bot.x.toFixed(0) + ",z" + bot.z.toFixed(0)); } } } finally { Math.random = random; }
-    // about a second: it has dropped and is standing on the lower tile, which has 1.7 s to live
+    try { for (let i = 0; i < 45; i++) { (room as any).step({ dt: 1 / 30 }); if (i % 3 === 0) { trace.push(i + ":x" + bot.x.toFixed(0) + ",z" + bot.z.toFixed(0)); } } } finally { Math.random = random; }
+    // about a second and a half: it has dropped and is standing on the lower tile, which has 1.7 s to live
     assert.ok(bot.alive, "still alive: " + trace.join(" "));
     assert.strictEqual(bot.z, floorZ(1), "dropped to floor 1: " + trace.join(" "));
-    assert.strictEqual(tileUnder(bot, room.state.tiles), CELLS + 4 * GRID + 5, "standing on the tile below the gap");
+    assert.strictEqual(tileUnder(bot, room.state.tiles), HEX_CELLS + MIDDLE_CELL + 1, "standing on the tile below the gap");
   });
 
   it("Hex-A-Gone bots: a bot never drops where there is nothing below", async () => {
-    const { room, bot, set, crackHere } = await botOnTile([4, 4]);
-    set(0, 4, 4, YELLOW); // no tile anywhere below
+    const { room, bot, set, crackHere } = await botOnTile(MIDDLE_CELL);
+    set(0, MIDDLE_CELL, YELLOW); // no tile anywhere below
     crackHere(0.3);
     run(room, 40);
-    assert.ok(Math.abs(bot.x - 450) < 1 && Math.abs(bot.y - 450) < 1, "it stayed on its own tile and did not walk off on purpose");
+    const [mx, my] = hexCentre(MIDDLE_CELL);
+    assert.ok(Math.abs(bot.x - mx) < 1 && Math.abs(bot.y - my) < 1, "it stayed on its own tile and did not walk off on purpose");
   });
 
   it("Hex-A-Gone with bots: a round with only bots and one idle human ends, bots use several floors, nothing goes wrong", async () => {

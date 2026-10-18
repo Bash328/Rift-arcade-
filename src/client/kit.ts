@@ -68,6 +68,11 @@ export function createStage(arenaEl: HTMLElement) {
   }
   look();
 
+  /** The glow can be switched off for a mode that wants flat, clear colours; a device that cannot keep up also gives it up for good. */
+  let glowWanted = true;
+  let glowGivenUp = false;
+  const setGlow = (on: boolean) => { glowWanted = on; bloom.enabled = on && !glowGivenUp; };
+
   /** Render scale: drops on a device that can't keep up, and recovers when it can. */
   let scale = 1;
 
@@ -105,12 +110,12 @@ export function createStage(arenaEl: HTMLElement) {
         for (const target of [composer.renderTarget1, composer.renderTarget2]) { target.samples = 0; target.dispose(); } // reallocated without MSAA on next use
       }
       else if (scale > 0.5) { scale = Math.max(0.5, scale * 0.85); resize(); }
-      else if (bloom.enabled) { bloom.enabled = false; }
+      else if (bloom.enabled) { glowGivenUp = true; bloom.enabled = false; }
     }
     else if (fast >= 600 && scale < 1) { scale = Math.min(1, scale * 1.1); fast = 0; resize(); }
   }
 
-  return { renderer, scene, camera, composer, adaptQuality, renderScale: () => scale, look };
+  return { renderer, scene, camera, composer, adaptQuality, renderScale: () => scale, look, setGlow };
 }
 
 /** A dark solid box with glowing edges. Sim (x, y) maps to world (x, z). */

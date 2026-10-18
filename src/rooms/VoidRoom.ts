@@ -6,8 +6,8 @@ import { InputPacer } from "./inputPacing.js";
 import { sanitizeName } from "../shared/names.js";
 import { TICK_RATE, PETS, BOT_NAMES, ROUND_END_PAUSE, READY_LOCK } from "../shared/constants.js";
 import {
-  GRID, TILE, CELLS, VOID_SIZE, SOLID, CRACKING, GONE, CRACK_TIME, LAND_GRACE, FLOOR_GAP, SUDDEN_DEATH_AT,
-  tileAt, tileUnder, floorsOf, floorOf, floorZ, fallLimit, dealKinds, breakTime, suddenDeathGap, stepVoidEntity, type VoidInput,
+  TILE, SOLID, CRACKING, GONE, CRACK_TIME, LAND_GRACE, FLOOR_GAP, SUDDEN_DEATH_AT, VOID_SIZE,
+  boardOf, tileUnder, floorsOf, floorOf, floorZ, fallLimit, dealKinds, breakTime, suddenDeathGap, stepVoidEntity, type VoidInput,
 } from "../shared/void.js";
 import { VOID_MODES, voidModeOf } from "../shared/voidModes.js";
 
@@ -195,21 +195,22 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private botCommand(bot: VoidPlayer, brain: BotBrain, dt: number): VoidInput {
     const s = this.state;
     const skill = SKILLS[brain.skill];
+    const board = boardOf(s.tiles);
     const floors = floorsOf(s.tiles);
-    const here = tileAt(bot.x, bot.y);
+    const here = board.at(bot.x, bot.y);
     if (here < 0 || bot.z < floorZ(floorOf(bot.z, floors)) - LAND_GRACE) { return IDLE; } // already falling
     const floor = Math.min(floors - 1, Math.max(0, Math.round(-bot.z / FLOOR_GAP)));
     if (floor !== brain.floor) { brain.floor = floor; brain.goal = -1; } // dropped down: start afresh
     const onGround = bot.z === floorZ(floor);
-    const tile = (f: number, i: number) => s.tiles[f * CELLS + i];
+    const tile = (f: number, i: number) => s.tiles[f * board.per + i];
     const dir = (delta: number) => (Math.abs(delta) > 6 ? Math.sign(delta) : 0);
 
     if (brain.goal >= 0) {
-      const gx = ((brain.goal % GRID) + 0.5) * TILE, gy = (Math.floor(brain.goal / GRID) + 0.5) * TILE;
+      const [gx, gy] = board.centre(brain.goal);
       if (Math.hypot(bot.x - gx, bot.y - gy) < 18) { brain.goal = -1; return IDLE; } // arrived: stand and wait
       const moveX = dir(gx - bot.x), moveY = dir(gy - bot.y);
       // Straight at a gap with the goal beyond it: jump once the missing tile is next.
-      const ahead = tileAt(bot.x + moveX * 45, bot.y + moveY * 45);
+      const ahead = board.at(bot.x + moveX * 45, bot.y + moveY * 45);
       const jump = brain.hop && onGround && (moveX === 0 || moveY === 0) && (ahead < 0 || tile(floor, ahead) === GONE) ? 1 : 0;
       return { moveX, moveY, jump };
     }
@@ -217,32 +218,22 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     brain.retarget -= dt;
     if (brain.retarget > 0) { return IDLE; }
     brain.retarget = skill.react[0] + Math.random() * (skill.react[1] - skill.react[0]);
-    const under = floor * CELLS + here;
+    const under = floor * board.per + here;
     const remaining = s.tiles[under] === CRACKING ? this.crack[under] : s.tiles[under] === SOLID ? this.breakAt[under] : 0;
     if (remaining > skill.leaveAt) { return IDLE; } // plenty of time on this one
     if (Math.random() < skill.slip) { brain.retarget += 0.35; return IDLE; } // a moment's hesitation
 
     const hex = s.mode === "hex";
     const suddenDeath = hex && this.playClock >= SUDDEN_DEATH_AT;
-    const solidAround = (f: number, i: number) => {
-      const cx = i % GRID, cy = Math.floor(i / GRID);
-      let n = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const x = cx + dx, y = cy + dy;
-          if ((dx || dy) && x >= 0 && y >= 0 && x < GRID && y < GRID && tile(f, y * GRID + x) === SOLID) { n++; }
-        }
-      }
-      return n;
-    };
+    const solidAround = (f: number, i: number) => board.neighbours(i).filter((j) => tile(f, j) === SOLID).length;
     // Solid tiles of a floor that touch form an island; a small island is a trap, a big one is somewhere to last.
     const islandCache = new Map<number, { island: Int16Array; size: number[] }>();
     const islandsOf = (f: number) => {
       let found = islandCache.get(f);
       if (found) { return found; }
-      const island = new Int16Array(CELLS).fill(-1);
+      const island = new Int16Array(board.per).fill(-1);
       const size: number[] = [];
-      for (let start = 0; start < CELLS; start++) {
+      for (let start = 0; start < board.per; start++) {
         if (tile(f, start) !== SOLID || island[start] >= 0) { continue; }
         const id = size.length;
         const stack = [start];
@@ -251,12 +242,8 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
         while (stack.length) {
           const i = stack.pop()!;
           count++;
-          const cx = i % GRID, cy = Math.floor(i / GRID);
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const x = cx + dx, y = cy + dy, j = y * GRID + x;
-              if (x >= 0 && y >= 0 && x < GRID && y < GRID && tile(f, j) === SOLID && island[j] < 0) { island[j] = id; stack.push(j); }
-            }
+          for (const j of board.neighbours(i)) {
+            if (tile(f, j) === SOLID && island[j] < 0) { island[j] = id; stack.push(j); }
           }
         }
         size.push(count);
@@ -268,43 +255,36 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     /** How good a solid tile is to stand on: lasts long (colour and floor), touches plenty of solid ground, is away from the middle and from others. */
     const value = (f: number, i: number) => {
       const { island, size } = islandsOf(f);
-      const cx = (i % GRID + 0.5) * TILE, cy = (Math.floor(i / GRID) + 0.5) * TILE;
-      const lasts = hex ? breakTime(f, s.kinds[f * CELLS + i]) : CRACK_TIME;
+      const [cx, cy] = board.centre(i);
+      const lasts = hex ? breakTime(f, s.kinds[f * board.per + i]) : CRACK_TIME;
       let score = 1.5 * lasts + solidAround(f, i) + 0.25 * Math.min(size[island[i]], 40)
-        + 0.3 * Math.hypot((i % GRID) - (GRID - 1) / 2, Math.floor(i / GRID) - (GRID - 1) / 2) + Math.random() * skill.noise;
+        + 0.003 * Math.hypot(cx - board.middle[0], cy - board.middle[1]) + Math.random() * skill.noise;
       for (const other of s.players.values()) {
         if (other !== bot && other.alive && Math.abs(other.z - floorZ(f)) < 60 && Math.hypot(other.x - cx, other.y - cy) < 70) { score -= 2; }
       }
       return score;
     };
 
-    const hx = here % GRID, hy = Math.floor(here / GRID);
     let best = -Infinity, goal = -1, hop = false;
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
-        const x = hx + dx, y = hy + dy;
-        if ((!dx && !dy) || x < 0 || y < 0 || x >= GRID || y >= GRID) { continue; }
-        const far = Math.max(Math.abs(dx), Math.abs(dy)) === 2;
-        // Two tiles away is only reachable by jumping straight across a missing tile.
-        if (far && !((dx === 0 || dy === 0) && tile(floor, (hy + dy / 2) * GRID + hx + dx / 2) === GONE)) { continue; }
-        const i = y * GRID + x;
-        if (tile(floor, i) !== SOLID) { continue; }
-        const score = value(floor, i) - (far ? 1.5 : 0);
-        if (score > best) { best = score; goal = i; hop = far; }
+    for (const i of board.neighbours(here)) {
+      if (tile(floor, i) === SOLID) {
+        const score = value(floor, i);
+        if (score > best) { best = score; goal = i; hop = false; }
+      }
+    }
+    for (const [target, middle] of board.jumps(here)) {
+      if (tile(floor, middle) === GONE && tile(floor, target) === SOLID) {
+        const score = value(floor, target) - 1.5;
+        if (score > best) { best = score; goal = target; hop = true; }
       }
     }
     // Dropping down on purpose: step into a gap with a solid tile on the floor below it, when that beats what is left up here.
     if (floor + 1 < floors) {
       const bias = (suddenDeath ? 4 : 0) + (best < 5 ? 3 : 0) - 3;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const x = hx + dx, y = hy + dy;
-          if ((!dx && !dy) || x < 0 || y < 0 || x >= GRID || y >= GRID) { continue; }
-          const i = y * GRID + x;
-          if (tile(floor, i) !== GONE || tile(floor + 1, i) !== SOLID) { continue; }
-          const score = value(floor + 1, i) + bias;
-          if (score > best) { best = score; goal = i; hop = false; }
-        }
+      for (const i of board.neighbours(here)) {
+        if (tile(floor, i) !== GONE || tile(floor + 1, i) !== SOLID) { continue; }
+        const score = value(floor + 1, i) + bias;
+        if (score > best) { best = score; goal = i; hop = false; }
       }
     }
     brain.goal = goal;
@@ -322,14 +302,14 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private setupMode(id: string) {
     const s = this.state;
     const mode = voidModeOf(id);
-    const count = mode.floors * CELLS;
+    const count = mode.floors * mode.cells;
     s.mode = mode.id;
     s.tiles.clear();
     s.kinds.clear();
     for (let i = 0; i < count; i++) { s.tiles.push(SOLID); }
     this.breakAt = new Array<number>(count).fill(CRACK_TIME);
     if (mode.floors > 1) {
-      dealKinds().forEach((kind, i) => { s.kinds.push(kind); this.breakAt[i] = breakTime(Math.floor(i / CELLS), kind); });
+      dealKinds().forEach((kind, i) => { s.kinds.push(kind); this.breakAt[i] = breakTime(Math.floor(i / mode.cells), kind); });
     }
     this.crack = new Array<number>(count).fill(0);
   }
@@ -344,11 +324,12 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   /** Put every living player on an even ring around the middle of the grid. */
   private spread() {
     const players = [...this.state.players.values()].filter((p) => p.alive);
+    const middle = boardOf(this.state.tiles).middle;
     players.forEach((p, i) => {
       const angle = (i / players.length) * Math.PI * 2;
       const radius = players.length === 1 ? 0 : 130;
-      p.x = VOID_SIZE / 2 + Math.cos(angle) * radius;
-      p.y = VOID_SIZE / 2 + Math.sin(angle) * radius;
+      p.x = middle[0] + Math.cos(angle) * radius;
+      p.y = middle[1] + Math.sin(angle) * radius;
       p.vx = p.vy = p.z = p.vz = 0;
     });
   }
@@ -461,13 +442,14 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
   private crackRandomTile() {
     const s = this.state;
     const floors = floorsOf(s.tiles);
+    const board = boardOf(s.tiles);
     const occupied = new Set<number>();
     for (const p of s.players.values()) {
       if (p.alive) { occupied.add(Math.min(floors - 1, Math.max(0, Math.round(-p.z / FLOOR_GAP)))); }
     }
     const solid: number[] = [];
     for (let i = 0; i < s.tiles.length; i++) {
-      if (s.tiles[i] === SOLID && (occupied.size === 0 || occupied.has(Math.floor(i / CELLS)))) { solid.push(i); }
+      if (s.tiles[i] === SOLID && (occupied.size === 0 || occupied.has(Math.floor(i / board.per)))) { solid.push(i); }
     }
     if (!solid.length) { return; }
     const idx = solid[Math.floor(Math.random() * solid.length)];

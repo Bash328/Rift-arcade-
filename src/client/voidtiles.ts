@@ -1,47 +1,34 @@
-// Voidfall's tiles, drawn as four instanced meshes (bodies, glowing frames, crack flashes, warning stripes) however
-// many floors there are: a Hex-A-Gone round has 243 tiles, which as separate objects would be far too many draw calls
-// for a phone. Each tile is told apart by its own entry in the instance buffers: where it is, its colours, and how
-// see-through it is (the floors above a player who has dropped down fade out around them).
+// Voidfall's tiles, drawn as a few instanced meshes however many there are: classic Voidfall is 81 square tiles with
+// glowing frames, Hex-A-Gone is 270 solid hexagons on three floors (separate objects would be far too many draw calls
+// for a phone). Each tile has its own entry in the instance buffers: where it is, its colour, and whether it is shown.
+// The floors above a player who has dropped down are hidden (they would be in the way; the camera is lower than they are).
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { GRID, TILE, CELLS, HEX_FLOORS, SOLID, CRACKING, GONE, RED, floorZ } from "../shared/void.js";
+import { TILE, CELLS, HEX_CELLS, HEX_FLOORS, HEX_R, CRACKING, GONE, RED, GREEN, SQUARE_BOARD, HEX_BOARD, floorZ } from "../shared/void.js";
 import { GRAVITY } from "../shared/constants.js";
 import { NEON_CYAN, loadFx } from "./kit.js";
 
 const TILE_H = 24;
-/** Tiles of floors above the player fade within this distance of them, to this opacity. */
-const FADE_RADIUS = 260;
-const FADED = 0.12;
-const MAX = CELLS * HEX_FLOORS;
+const SLICE = TILE - 6; // a square tile is a little smaller than its cell, so there is a seam
+const HEX_RADIUS = HEX_R - 3;
 
-/** Edge and body colour of each kind of tile (green, yellow, red), and the classic cyan tile. */
-const KIND_EDGE = [0x3dff7a, 0xffd23f, 0xff3b4a].map((c) => new THREE.Color(c));
-const KIND_BODY = [0x0f2a1c, 0x2b2410, 0x2d0e14].map((c) => new THREE.Color(c));
-const CLASSIC_EDGE = new THREE.Color(NEON_CYAN);
-const CLASSIC_BODY = new THREE.Color(0x16102b);
-/** A tile that is cracking flashes: white in Hex-A-Gone (never red, which is a kind), red in classic. */
-const HEX_FLASH = { edge: [new THREE.Color(0xe8e8e8), new THREE.Color(0xc99a5a)], body: [new THREE.Color(0x707070), new THREE.Color(0x303030)] };
-const CLASSIC_FLASH = { edge: [new THREE.Color(0xff6a6a), new THREE.Color(0xff2020)], body: [new THREE.Color(0x7a0a0a), new THREE.Color(0x2a0404)] };
-const FX_HEX = new THREE.Color(0x888888);
-const FX_CLASSIC = new THREE.Color(0xff6a5a);
 const OFF = new THREE.Color(0x000000);
+const one = new THREE.Vector3(1, 1, 1);
 
-/** One instance slot per tile (the order does not matter now that every tile is opaque and writes depth). */
-const SLOT = Array.from({ length: MAX }, (_, i) => (HEX_FLOORS - 1 - Math.floor(i / CELLS)) * CELLS + (i % CELLS));
+/** Classic: dark slabs with glowing cyan frames that flash red when they crack. */
+const CLASSIC = {
+  edge: new THREE.Color(NEON_CYAN),
+  body: new THREE.Color(0x16102b),
+  flashEdge: [new THREE.Color(0xff6a6a), new THREE.Color(0xff2020)],
+  flashBody: [new THREE.Color(0x7a0a0a), new THREE.Color(0x2a0404)],
+  fx: new THREE.Color(0xff6a5a),
+};
+/** Hex-A-Gone: plain, solid colours (green lasts, yellow is quicker, red goes almost at once). A cracking tile flashes white. */
+const HEX_BODY = [0x2fcf5f, 0xffd23a, 0xff4a4a].map((c) => new THREE.Color(c));
+const HEX_FLASH = new THREE.Color(0xffffff);
 
-/**
- * Per-instance see-through amount for a material, read from the instanced attribute `aFade`. It is a screen-door
- * dither (a pattern of pixels is dropped, more of them the more see-through the tile is) rather than real blending,
- * so every tile stays opaque, writes depth and is drawn in the right order whatever floor it is on.
- */
-const BAYER = `
-varying float vFade;
-float bayer4(vec2 p) {
-  int i = int(mod(p.x, 4.0)) + 4 * int(mod(p.y, 4.0));
-  float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-  return (m[i] + 0.5) / 16.0;
-}`;
+/** Per-instance visibility for a material, read from the instanced attribute `aFade` (0 hides the tile, 1 shows it). */
 function fadeable<T extends THREE.Material>(material: T, fade: Float32Array, geometry: THREE.BufferGeometry): T {
   geometry.setAttribute("aFade", new THREE.InstancedBufferAttribute(fade, 1).setUsage(THREE.DynamicDrawUsage));
   material.onBeforeCompile = (shader) => {
@@ -49,10 +36,10 @@ function fadeable<T extends THREE.Material>(material: T, fade: Float32Array, geo
       .replace("#include <common>", "#include <common>\nattribute float aFade;\nvarying float vFade;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvFade = aFade;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>" + BAYER)
-      .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\nif (vFade < 0.999 && bayer4(gl_FragCoord.xy) >= vFade) { discard; }");
+      .replace("#include <common>", "#include <common>\nvarying float vFade;")
+      .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\nif (vFade < 0.5) { discard; }");
   };
-  material.customProgramCacheKey = () => "voidtile-fade";
+  material.customProgramCacheKey = () => "voidtile-hide";
   return material;
 }
 
@@ -69,91 +56,98 @@ function stripeTexture() {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
   const g = c.getContext("2d")!;
-  g.strokeStyle = "rgba(255,230,230,0.7)";
-  g.lineWidth = 9;
-  for (let k = -64; k < 128; k += 22) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k + 64, 64); g.stroke(); }
+  g.strokeStyle = "rgba(255,255,255,0.85)";
+  g.lineWidth = 10;
+  for (let k = -64; k < 128; k += 24) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k + 64, 64); g.stroke(); }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
 export interface TileView {
-  /** Where the local player is, to fade the floors above them: null when spectating (everything shows). */
-  me: { x: number; y: number; floor: number } | null;
+  /** Where the local player is, to hide the floors above them: null when spectating (everything shows). */
+  me: { floor: number } | null;
 }
 
-export function createTiles(scene: THREE.Scene, events: { cracked(at: THREE.Vector3): void; dropped(at: THREE.Vector3): void }) {
-  const fade = new Float32Array(MAX).fill(1);
-  /** The stripes are numbered by red tile, not by slot, so they keep their own copy of the fade. */
-  const stripeFade = new Float32Array(MAX).fill(1);
-  const w = TILE - 6;
+interface SetConfig {
+  hex: boolean;
+  max: number;
+  per: number;
+  bodyGeo: THREE.BufferGeometry;
+  frameGeo?: THREE.BufferGeometry;
+  fxGeo?: THREE.BufferGeometry;
+  stripeGeo?: THREE.BufferGeometry;
+}
 
-  const bodyGeometry = new THREE.BoxGeometry(w, TILE_H, w);
-  const bodies = new THREE.InstancedMesh(bodyGeometry, fadeable(new THREE.MeshStandardMaterial({ roughness: 0.6 }), fade, bodyGeometry), MAX);
-  bodies.castShadow = bodies.receiveShadow = true;
+/** One layout's worth of instanced tiles. */
+function createSet(scene: THREE.Scene, cfg: SetConfig, events: { cracked(at: THREE.Vector3): void; dropped(at: THREE.Vector3): void }) {
+  const { max, per, hex } = cfg;
+  const board = hex ? HEX_BOARD : SQUARE_BOARD;
+  const fade = new Float32Array(max).fill(1);
+  /** The stripes are numbered by red tile, not by tile, so they keep their own copy. */
+  const stripeFade = new Float32Array(max).fill(1);
 
-  const frameGeo = frameGeometry(w, TILE_H, w, 3);
-  const frames = new THREE.InstancedMesh(frameGeo, fadeable(new THREE.MeshBasicMaterial(), fade, frameGeo), MAX);
-
-  const fxGeo = new THREE.PlaneGeometry(TILE - 14, TILE - 14);
-  const fx = new THREE.InstancedMesh(fxGeo, fadeable(new THREE.MeshBasicMaterial({ map: loadFx("spark_03"), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }), fade, fxGeo), MAX);
-
-  const stripeGeo = new THREE.PlaneGeometry(w - 16, w - 16);
-  const stripes = new THREE.InstancedMesh(stripeGeo, fadeable(new THREE.MeshBasicMaterial({ map: stripeTexture(), transparent: true, depthWrite: false }), stripeFade, stripeGeo), MAX);
-
-  for (const mesh of [bodies, frames, fx, stripes]) {
-    mesh.frustumCulled = false;
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    scene.add(mesh);
+  const bodyMaterial = fadeable(new THREE.MeshStandardMaterial({ roughness: hex ? 0.75 : 0.6 }), fade, cfg.bodyGeo);
+  const bodies = new THREE.InstancedMesh(cfg.bodyGeo, bodyMaterial, max);
+  bodies.receiveShadow = true; // pets cast onto the tiles; the tiles themselves cast nothing (hidden floors must leave no shadow)
+  const meshes: THREE.InstancedMesh[] = [bodies];
+  let frames: THREE.InstancedMesh | undefined;
+  let fx: THREE.InstancedMesh | undefined;
+  let stripes: THREE.InstancedMesh | undefined;
+  if (cfg.frameGeo) { frames = new THREE.InstancedMesh(cfg.frameGeo, fadeable(new THREE.MeshBasicMaterial(), fade, cfg.frameGeo), max); meshes.push(frames); }
+  if (cfg.fxGeo) {
+    fx = new THREE.InstancedMesh(cfg.fxGeo, fadeable(new THREE.MeshBasicMaterial({ map: loadFx("spark_03"), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }), fade, cfg.fxGeo), max);
+    meshes.push(fx);
+  }
+  if (cfg.stripeGeo) {
+    stripes = new THREE.InstancedMesh(cfg.stripeGeo, fadeable(new THREE.MeshBasicMaterial({ map: stripeTexture(), transparent: true, depthWrite: false }), stripeFade, cfg.stripeGeo), max);
+    meshes.push(stripes);
   }
   const hide = new THREE.Matrix4().makeScale(0, 0, 0);
-  for (let slot = 0; slot < MAX; slot++) {
-    for (const mesh of [bodies, frames, fx, stripes]) { mesh.setMatrixAt(slot, hide); mesh.setColorAt(slot, OFF); }
+  for (const mesh of meshes) {
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.visible = false;
+    scene.add(mesh);
+    for (let i = 0; i < max; i++) { mesh.setMatrixAt(i, hide); mesh.setColorAt(i, OFF); }
   }
 
   // What each tile showed last frame, and its fall.
-  const shown = new Uint8Array(MAX).fill(255);
-  const fallV = new Float32Array(MAX);
-  const fallY = new Float32Array(MAX);
-  const falling = new Uint8Array(MAX);
-  const hidden = new Uint8Array(MAX);
-  const topY = new Float32Array(MAX);
-  const seen = new Uint8Array(MAX);
-  const tileQuat = Array.from({ length: MAX }, (_, i) => new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, (i * 1.7) % (Math.PI * 2))));
+  const shown = new Uint8Array(max).fill(255);
+  const fallV = new Float32Array(max);
+  const fallY = new Float32Array(max);
+  const falling = new Uint8Array(max);
+  const topY = new Float32Array(max);
+  const seen = new Uint8Array(max);
+  const tileQuat = Array.from({ length: max }, (_, i) => new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, (i * 1.7) % (Math.PI * 2))));
   const flatQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
-  const one = new THREE.Vector3(1, 1, 1);
   const place = new THREE.Vector3();
   const matrix = new THREE.Matrix4();
+  const tint = new THREE.Color();
   let redTiles: number[] = [];
   let signature = "";
 
   /** A new round (or a different mode): forget what the tiles were doing and find the red ones, which get stripes. */
-  function reset(states: ArrayLike<number>, kinds: ArrayLike<number>) {
-    shown.fill(255); fallV.fill(0); fallY.fill(0); falling.fill(0); hidden.fill(0); fade.fill(1);
+  function reset(kinds: ArrayLike<number>) {
+    shown.fill(255); fallV.fill(0); fallY.fill(0); falling.fill(0); fade.fill(1);
     redTiles = [];
-    for (let i = 0; i < kinds.length && i < states.length; i++) { if (kinds[i] === RED) { redTiles.push(i); } }
-    stripes.count = Math.max(redTiles.length, 0);
+    if (stripes) { for (let i = 0; i < kinds.length && i < max; i++) { if (kinds[i] === RED) { redTiles.push(i); } } stripes.count = redTiles.length; }
   }
 
   return {
+    show(on: boolean) { for (const mesh of meshes) { mesh.visible = on; } },
     update(states: ArrayLike<number>, kinds: ArrayLike<number>, round: number, view: TileView, now: number, dt: number) {
-      const count = states.length;
-      const hex = count > CELLS;
+      const count = Math.min(states.length, max);
       const sig = `${round}:${count}:${kinds.length}`;
-      if (sig !== signature) { signature = sig; reset(states, kinds); }
-      const flash = hex ? HEX_FLASH : CLASSIC_FLASH;
+      if (sig !== signature) { signature = sig; reset(kinds); }
       const blink = Math.sin(now / 60) > 0 ? 0 : 1;
-      const k = Math.min(1, dt * 10);
+      const k = Math.min(1, dt * 14);
 
-      for (let i = 0; i < MAX; i++) {
-        const slot = SLOT[i];
-        if (i >= count) {
-          if (!hidden[i]) { hidden[i] = 1; for (const mesh of [bodies, frames, fx]) { mesh.setMatrixAt(slot, hide); mesh.setColorAt(slot, OFF); } }
-          continue;
-        }
+      for (let i = 0; i < max; i++) {
+        if (i >= count) { for (const mesh of meshes) { if (mesh !== stripes) { mesh.setMatrixAt(i, hide); } } seen[i] = 0; continue; }
         const state = states[i];
-        const floor = Math.floor(i / CELLS), cell = i % CELLS;
-        const x = ((cell % GRID) + 0.5) * TILE, z = (Math.floor(cell / GRID) + 0.5) * TILE;
+        const floor = Math.floor(i / per), cell = i % per;
+        const [x, z] = board.centre(cell);
         if (state !== shown[i]) {
           const first = shown[i] === 255;
           shown[i] = state;
@@ -166,62 +160,92 @@ export function createTiles(scene: THREE.Scene, events: { cracked(at: THREE.Vect
         const base = floorZ(floor) - TILE_H / 2;
         let y = base;
         if (state === CRACKING) { y += Math.sin(now / 25 + i) * 1.6; }
-        else if (state === GONE) {
-          if (falling[i]) { fallV[i] += GRAVITY * dt; fallY[i] -= fallV[i] * dt; y += fallY[i]; if (fallY[i] < -900) { falling[i] = 0; } }
-        }
+        else if (state === GONE && falling[i]) { fallV[i] += GRAVITY * dt; fallY[i] -= fallV[i] * dt; y += fallY[i]; if (fallY[i] < -1500) { falling[i] = 0; } }
         const visible = state !== GONE || falling[i] === 1;
         topY[i] = y + TILE_H / 2;
-        seen[i] = visible ? 1 : 0;
 
-        // See-through where the player dropped to a lower floor and this tile is in the way above them.
-        let goal = 1;
-        if (view.me && floor < view.me.floor && Math.hypot(x - view.me.x, z - view.me.y) < FADE_RADIUS) { goal = FADED; }
-        fade[slot] += (goal - fade[slot]) * k;
+        // Floors above the player are hidden (quickly, so it is not a pop); everything else shows.
+        const goal = view.me && floor < view.me.floor ? 0 : 1;
+        fade[i] += (goal - fade[i]) * k;
+        seen[i] = visible && fade[i] >= 0.5 ? 1 : 0;
 
-        if (!visible) {
-          for (const mesh of [bodies, frames, fx]) { mesh.setMatrixAt(slot, hide); mesh.setColorAt(slot, OFF); }
+        if (!visible || fade[i] < 0.02) {
+          for (const mesh of meshes) { if (mesh !== stripes) { mesh.setMatrixAt(i, hide); mesh.setColorAt(i, OFF); } }
           continue;
         }
-        place.set(x, y, z);
         matrix.makeTranslation(x, y, z);
-        bodies.setMatrixAt(slot, matrix);
-        frames.setMatrixAt(slot, matrix);
+        bodies.setMatrixAt(i, matrix);
+        frames?.setMatrixAt(i, matrix);
         const cracking = state === CRACKING;
-        const kind = hex ? kinds[i] : -1;
-        const edge = cracking ? flash.edge[blink] : hex ? KIND_EDGE[kind] : CLASSIC_EDGE;
-        const body = cracking ? flash.body[blink] : hex ? KIND_BODY[kind] : CLASSIC_BODY;
-        frames.setColorAt(slot, edge);
-        bodies.setColorAt(slot, body);
-        if (cracking) {
-          place.set(x, y + TILE_H / 2 + 0.8, z);
-          matrix.compose(place, tileQuat[i], one);
-          fx.setMatrixAt(slot, matrix);
-          fx.setColorAt(slot, (hex ? FX_HEX : FX_CLASSIC).clone().multiplyScalar(0.55 + 0.45 * Math.sin(now / 45 + i)));
+        if (hex) {
+          const base = HEX_BODY[kinds[i] ?? GREEN];
+          bodies.setColorAt(i, cracking && blink === 0 ? HEX_FLASH : base);
         } else {
-          fx.setMatrixAt(slot, hide);
-          fx.setColorAt(slot, OFF);
+          bodies.setColorAt(i, cracking ? CLASSIC.flashBody[blink] : CLASSIC.body);
+          frames?.setColorAt(i, cracking ? CLASSIC.flashEdge[blink] : CLASSIC.edge);
+        }
+        if (fx) {
+          if (cracking) {
+            place.set(x, y + TILE_H / 2 + 0.8, z);
+            matrix.compose(place, tileQuat[i], one);
+            fx.setMatrixAt(i, matrix);
+            fx.setColorAt(i, tint.copy(CLASSIC.fx).multiplyScalar(0.55 + 0.45 * Math.sin(now / 45 + i)));
+          } else {
+            fx.setMatrixAt(i, hide);
+            fx.setColorAt(i, OFF);
+          }
         }
       }
 
-      // Warning stripes over the red tiles, riding along with them.
-      for (let j = 0; j < redTiles.length; j++) {
-        const i = redTiles[j];
-        if (!seen[i]) { stripes.setMatrixAt(j, hide); continue; }
-        const cell = i % CELLS;
-        place.set(((cell % GRID) + 0.5) * TILE, topY[i] + 0.5, (Math.floor(cell / GRID) + 0.5) * TILE);
-        matrix.compose(place, flatQuat, one);
-        stripes.setMatrixAt(j, matrix);
+      // Warning stripes over the red tiles (so they are not told apart by colour alone), riding along with them.
+      if (stripes) {
+        for (let j = 0; j < redTiles.length; j++) {
+          const i = redTiles[j];
+          if (!seen[i]) { stripes.setMatrixAt(j, hide); stripeFade[j] = 0; continue; }
+          const [x, z] = board.centre(i % per);
+          place.set(x, topY[i] + 0.5, z);
+          matrix.compose(place, flatQuat, one);
+          stripes.setMatrixAt(j, matrix);
+          stripeFade[j] = 1;
+        }
+        (stripes.geometry.getAttribute("aFade") as THREE.InstancedBufferAttribute).needsUpdate = true;
+        stripes.instanceMatrix.needsUpdate = true;
       }
-      // Stripes share the fade of the tile they sit on.
-      for (let j = 0; j < redTiles.length; j++) { stripeFade[j] = fade[SLOT[redTiles[j]]]; }
-      (stripes.geometry.getAttribute("aFade") as THREE.InstancedBufferAttribute).needsUpdate = true;
 
-      for (const mesh of [bodies, frames, fx]) {
+      for (const mesh of meshes) {
+        if (mesh === stripes) { continue; }
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) { mesh.instanceColor.needsUpdate = true; }
         (mesh.geometry.getAttribute("aFade") as THREE.InstancedBufferAttribute).needsUpdate = true;
       }
-      stripes.instanceMatrix.needsUpdate = true;
     },
   };
 }
+
+export function createTiles(scene: THREE.Scene, events: { cracked(at: THREE.Vector3): void; dropped(at: THREE.Vector3): void }) {
+  // Classic Voidfall: 81 square slabs with glowing frames and a crack flash.
+  const square = createSet(scene, {
+    hex: false, max: CELLS, per: CELLS,
+    bodyGeo: new THREE.BoxGeometry(SLICE, TILE_H, SLICE),
+    frameGeo: frameGeometry(SLICE, TILE_H, SLICE, 3),
+    fxGeo: new THREE.PlaneGeometry(TILE - 14, TILE - 14),
+  }, events);
+  // Hex-A-Gone: 270 plain hexagon slabs, red ones striped. Cylinders of six sides have a corner pointing along z, which is
+  // the way the floor is laid out (pointy side up on the plan).
+  const hexStripe = new THREE.CircleGeometry(HEX_RADIUS - 11, 6).rotateZ(Math.PI / 6);
+  const hex = createSet(scene, {
+    hex: true, max: HEX_CELLS * HEX_FLOORS, per: HEX_CELLS,
+    bodyGeo: new THREE.CylinderGeometry(HEX_RADIUS, HEX_RADIUS, TILE_H, 6),
+    stripeGeo: hexStripe,
+  }, events);
+
+  return {
+    update(states: ArrayLike<number>, kinds: ArrayLike<number>, round: number, view: TileView, now: number, dt: number) {
+      const isHex = states.length > CELLS;
+      square.show(!isHex);
+      hex.show(isHex);
+      (isHex ? hex : square).update(states, kinds, round, view, now, dt);
+    },
+  };
+}
+

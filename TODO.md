@@ -17,8 +17,15 @@ Workflow note: changes are only pushed when asked ("push").
 
 ## Next up
 
-- Tune Hex-A-Gone after playing it (the break times, the colour mix per floor, the 75 second sudden death, the fade radius). The numbers are in `src/shared/void.ts`.
-- Hexagon tiles instead of squares (a visual swap: the tile grid stays square).
+- Tune Hex-A-Gone after playing it (the break times, the colour mix per floor, the 75 second sudden death, the floor gap). The numbers are in `src/shared/void.ts`.
+
+## Hex-A-Gone looks like Fall Guys' (2026-10-18, not pushed)
+
+- Real hexagon tiles (9 across, 10 down, every other row shifted half a tile: 90 per floor, 270 in all). Classic Voidfall keeps its 81 squares. The shared code works out which layout it has from the tile count (`boardOf` in `src/shared/void.ts`): finding the tile under a position, a tile's neighbours (6 on a hexagon floor), and which tiles a bot can jump.
+- Solid flat colours: green, yellow and red hexagons, red ones striped, a cracking tile flashes white. No frames and no glow in this mode (the glow is switched off while it is on; classic keeps its neon).
+- Floors are 520 units apart, more than the camera is high, and the floors above you disappear once you have dropped, so only the floor you are on (and the ones below) are in view. No more see-through dots. About 9,600 triangles (it was 42,000) and 20 to 36 draw calls.
+- Bots and sudden death work on hexagons too. 70 tests (new: hexagon lookup, neighbours, floors further apart than the camera).
+- `scripts/make-splash.cjs` regenerates the iPhone launch images.
 
 ## Hex-A-Gone bots (2026-10-18, not pushed)
 
@@ -31,8 +38,8 @@ Workflow note: changes are only pushed when asked ("push").
 ## Hex-A-Gone (2026-10-18, not pushed, not yet seen on a real phone)
 
 - A Voidfall mode that takes turns with classic each round (a private room's host can lock one in the lobby). Public rooms start it from the second round (the bots play it, see the bots section above).
-- Three full floors 120 units apart (243 tiles). Fall through a gap onto the floor below, or out if there is no tile. Each tile has a kind (green about 2s, yellow about 1.2s, red about 0.5s at the top; the middle floor is 15% faster and the bottom 30%), dealt at random each round and sent to the phones; the nine tiles under the start ring are never red. Cracking tiles flash white and shake, red tiles also have stripes.
-- You see lower floors because the floors above fade (a see-through dither, so they stay opaque and in the right order) in a circle of 260 units around you, and the camera follows your floor.
+- Three full floors of hexagons (270 tiles). Fall through a gap onto the floor below, or out if there is no tile. Each tile has a kind (green about 2s, yellow about 1.2s, red about 0.5s at the top; the middle floor is 15% faster and the bottom 30%), dealt at random each round and sent to the phones; the nine tiles under the start ring are never red. Cracking tiles flash white and shake, red tiles also have stripes.
+- The camera follows your floor and the floors above you are hidden (see the section above).
 - Sudden death after 75 seconds: one random solid tile cracks every second, down to four a second, on a floor somebody is on.
 - Voidfall now has an intro card, a round banner and the Cube Tag winner card with the next mode and its rules, Ready (up to 15 seconds), Share and Exit. The OUT lamp sits beside the names.
 - Drawn as four instanced meshes (22 to 52 draw calls in total, about 42,000 triangles, mostly the thick glowing frames). Shared physics in `src/shared/void.ts`: floors, landing that cannot skip a floor, steering that stays full on a lower floor.

@@ -34,7 +34,7 @@ const client = new ColyseusSDK<typeof server>(
   `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`
 );
 
-const { scene, camera, composer, renderer, adaptQuality, renderScale } = createStage(arenaEl);
+const { scene, camera, composer, renderer, adaptQuality, renderScale, setGlow } = createStage(arenaEl);
 const debug = createDebugHud(arenaEl, renderer, renderScale);
 
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -42,7 +42,7 @@ sun.position.set(VOID_SIZE / 2 + 300, 800, VOID_SIZE / 2 + 300);
 sun.target.position.set(VOID_SIZE / 2, 0, VOID_SIZE / 2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
-Object.assign(sun.shadow.camera, { left: -700, right: 700, top: 700, bottom: -700, near: 1, far: 2400 });
+Object.assign(sun.shadow.camera, { left: -700, right: 700, top: 700, bottom: -700, near: 1, far: 3600 });
 scene.add(sun, sun.target);
 
 const particles = createParticles(scene);
@@ -157,6 +157,7 @@ async function main() {
   let prevPhase = "";
   let prevCountdown = -1;
   let prevAlive = true;
+  let shownMode = "";
 
   /** Play a sound that fades with distance from my pet, so far-off tiles stay quiet. */
   const hear = (name: Sfx, at: THREE.Vector3) => {
@@ -227,13 +228,15 @@ async function main() {
     const { phase, countdown, alive, winner, mode, tiles: tileStates, kinds } = room.state;
     const me = room.state.players.get(room.sessionId);
     const floors = floorsOf(tileStates);
+    // Hex-A-Gone has plain, solid colours that must read clearly, so no glow there; classic keeps its neon.
+    if (mode !== shownMode) { shownMode = mode; setGlow(mode !== "hex"); }
     // Which floor I am on (the nearest surface to my height), for the camera and for fading the floors above me.
     const myZ = me ? predict.value(me, "z") : 0;
     const myFloor = Math.min(floors - 1, Math.max(0, Math.round(-myZ / FLOOR_GAP)));
     const watching = !me?.alive;
     tiles.update(
       tileStates, kinds, room.state.round,
-      { me: watching || !me ? null : { x: predict.value(me, "x"), y: predict.value(me, "y"), floor: myFloor } },
+      { me: watching || !me ? null : { floor: myFloor } },
       now, dt,
     );
 
