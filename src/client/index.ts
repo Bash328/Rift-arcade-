@@ -10,11 +10,11 @@ import { PLAYER_HALF } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
 import { MODES, modeOf } from "../shared/modes.js";
 import {
-  createStage, neonBox, loadFx, createParticles, createControls,
-  runLobby, showRoomTag, leaveToLobby, wireBack, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, SHADOW_MAP,
+  createStage, createBoxBatch, loadFx, createParticles, createControls,
+  runLobby, showRoomTag, leaveToLobby, wireBack, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, SHADOW_MAP, INTERP_BASE, adaptInterpolationDelay, trackRemote,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
-import { skinObstacle, rimScenery } from "./scenery.js";
+import { skinObstacle, flushIce, rimScenery } from "./scenery.js";
 
 const statusEl = document.getElementById("status")!;
 const roundEndEl = document.getElementById("roundEnd")!;
@@ -51,6 +51,8 @@ const goldMaterial = new THREE.MeshBasicMaterial({ color: 0xffd23f });
 const arenaGroup = new THREE.Group();
 scene.add(arenaGroup);
 let shownArena = "";
+/** False in the lobby: the arena behind it is only a preview and stays silent. */
+let inMatch = false;
 
 // Painted once and kept: arena swaps only dispose geometry and materials, not these.
 const floorTextures = new Map<string, THREE.Texture>();
@@ -191,6 +193,7 @@ function buildArena(arena: Arena) {
     item.geometry?.dispose();
     const materials = Array.isArray(item.material) ? item.material : item.material ? [item.material] : [];
     materials.forEach((material) => material.dispose());
+    if ((item as THREE.InstancedMesh).isInstancedMesh) { (item as THREE.InstancedMesh).dispose(); } // its per-instance buffers
   });
   arenaGroup.clear();
 
@@ -219,17 +222,23 @@ function buildArena(arena: Arena) {
   // Floating slab with a low rim wall around the playable area.
   const RIM = 16;
   const WALL_H = 30;
-  neonBox(arenaGroup, W + RIM * 2, 40, H + RIM * 2, W / 2, -20, H / 2, theme.edge, theme.slab);
-  neonBox(arenaGroup, RIM, WALL_H, H + RIM * 2, -RIM / 2, WALL_H / 2, H / 2, theme.rim, theme.block);
-  neonBox(arenaGroup, RIM, WALL_H, H + RIM * 2, W + RIM / 2, WALL_H / 2, H / 2, theme.rim, theme.block);
-  neonBox(arenaGroup, W + RIM * 2, WALL_H, RIM, W / 2, WALL_H / 2, -RIM / 2, theme.rim, theme.block);
-  neonBox(arenaGroup, W + RIM * 2, WALL_H, RIM, W / 2, WALL_H / 2, H + RIM / 2, theme.rim, theme.block);
+  // Every box's body and edges go into one batch: a handful of draw calls however many blocks the arena has.
+  const boxes = createBoxBatch();
+  boxes.add(W + RIM * 2, 40, H + RIM * 2, W / 2, -20, H / 2, theme.edge, theme.slab);
+  boxes.add(RIM, WALL_H, H + RIM * 2, -RIM / 2, WALL_H / 2, H / 2, theme.rim, theme.block);
+  boxes.add(RIM, WALL_H, H + RIM * 2, W + RIM / 2, WALL_H / 2, H / 2, theme.rim, theme.block);
+  boxes.add(W + RIM * 2, WALL_H, RIM, W / 2, WALL_H / 2, -RIM / 2, theme.rim, theme.block);
+  boxes.add(W + RIM * 2, WALL_H, RIM, W / 2, WALL_H / 2, H + RIM / 2, theme.rim, theme.block);
   // Long walls glow in the rim colour, blocks and pillars in the edge colour, so the layout reads at a glance.
   for (const o of arena.obstacles) {
     const long = Math.max(o.hw, o.hh) > 2 * Math.min(o.hw, o.hh);
     const edge = long ? theme.rim : theme.edge;
-    if (!skinObstacle(arenaGroup, o, theme, edge, iceEnv)) { neonBox(arenaGroup, o.hw * 2, o.h, o.hh * 2, o.x, o.h / 2, o.y, edge, theme.block); }
+    // A skinned block draws its own body and only borrows the batch for its softer edges.
+    if (skinObstacle(arenaGroup, o, theme, edge, iceEnv)) { boxes.add(o.hw * 2, o.h, o.hh * 2, o.x, o.h / 2, o.y, edge, undefined, 0.6); }
+    else { boxes.add(o.hw * 2, o.h, o.hh * 2, o.x, o.h / 2, o.y, edge, theme.block); }
   }
+  flushIce(arenaGroup, iceEnv);
+  boxes.build(arenaGroup);
   if (theme.floor) { rimScenery(arenaGroup, W, H, theme.floor, LITE); }
   if (theme.floor === "ice") {
     // A snowfield all around the rink, so the background is ground rather than empty sky.
@@ -319,9 +328,6 @@ modeSelect.addEventListener("change", () => { try { localStorage.setItem("mode",
 const quickPlay = (name: string) => client.joinOrCreate("my_room", { name });
 type GameRoom = Awaited<ReturnType<typeof quickPlay>>;
 
-/** False in the lobby: the arena behind it is only a preview and stays silent. */
-let inMatch = false;
-
 async function main() {
   const room = await runLobby<GameRoom>({
     quick: quickPlay,
@@ -332,19 +338,34 @@ async function main() {
   showRoomTag(room, "Cube Tag");
   audio.play("join");
   debug.watch(room);
-  // Others are drawn `delay` ms behind the newest update so a late or bunched-up one does not show.
-  // Updates arrive every ~33 ms, so 100 ms is a cushion of 3 updates; phones get a little more.
-  const predict = Predict.get(room, { mode: "lerp", delay: LITE ? 130 : 100 });
-
-  // Other players' inputs aren't ours to predict: interpolate them toward the
-  // latest snapshot instead. `smoothMs` springs the interpolated output - ~65 ms
-  // of extra display lag buys velocity that stays continuous even when the
-  // snapshot stream is rough. Use 0 where draw == hit precision matters most.
-  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
+  // Others are drawn a little behind the newest update so a late or bunched-up one does not show;
+  // how far behind follows the connection (adaptInterpolationDelay). The spring (smoothMs) keeps their
+  // speed continuous even when the update stream is rough: ~65 ms of extra display lag.
+  const predict = Predict.get(room, { mode: "lerp", delay: INTERP_BASE + 20, smoothMs: 65 });
+  adaptInterpolationDelay(room, predict);
 
   const input = room.input<MoveInput>({ mode: "reliable" });
   wireBack(room);
   document.getElementById("roundExit")!.addEventListener("click", (e) => { e.preventDefault(); void leaveToLobby(room); });
+  // Share the result: the share sheet on phones, else copy the text and link. It links to the game, not the room (which ends).
+  const shareEl = document.getElementById("roundShare") as HTMLButtonElement;
+  shareEl.addEventListener("click", async () => {
+    const { winner, mode, arena } = room.state;
+    const where = `${modeOf(mode).name} on ${arenaOf(arena).name}`;
+    const text = winner === room.state.players.get(room.sessionId)?.name
+      ? `I just won a round of Cube Tag (${where}) on Rift Arcade! Can you beat me?`
+      : `${winner} won a round of Cube Tag (${where}) on Rift Arcade. Think you can do better?`;
+    const url = `${location.origin}${location.pathname}`;
+    try {
+      if (navigator.share) { await navigator.share({ title: "Cube Tag", text, url }); return; }
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      shareEl.textContent = "Copied!";
+    } catch (e) {
+      if ((e as Error).name === "AbortError") { return; } // closed the share sheet
+      shareEl.textContent = "Could not share";
+    }
+    setTimeout(() => { shareEl.textContent = "Share"; }, 2500);
+  });
 
   // The first patch is what creates our own Player.
   statusEl.textContent = "Joining...";
@@ -370,9 +391,12 @@ async function main() {
 
   callbacks.onAdd("players", (player, sessionId) => {
     avatars.set(sessionId, new Avatar(scene, player.pet, player.hue));
+    // Other players' inputs aren't ours to predict: interpolate them toward the latest snapshot instead.
+    trackRemote(predict, player, ["x", "y", "z"]);
   });
 
-  callbacks.onRemove("players", (_player, sessionId) => {
+  callbacks.onRemove("players", (player, sessionId) => {
+    predict.detach(player);
     avatars.get(sessionId)?.dispose();
     avatars.delete(sessionId);
     prevHot.delete(sessionId);
@@ -524,6 +548,7 @@ async function main() {
     prevWinner = room.state.winner ?? "";
 
     controls.syncKnob();
+    lampEl.hidden = room.state.mode !== "tag"; // the IT lamp is Cube Tag only; Infection says so in the status line
     lampEl.classList.toggle("on", !!me?.hot);
     moveCamera(avatars.get(room.sessionId)?.group.position);
 

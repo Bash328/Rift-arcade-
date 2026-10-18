@@ -31,8 +31,11 @@
     <script type="application/ld+json">{"@context": "https://schema.org", "@type": "VideoGame", "name": "Cube Tag", "description": "Cube Tag is a fast online multiplayer tag game in 3D. Dodge, jump and climb platforms to avoid being IT. Play with friends using a room code, right in your browser.", "url": "https://rift-arcade.online/cube-tag/", "image": "https://rift-arcade.online/og-image.png", "genre": ["Multiplayer", "Action"], "playMode": "MultiPlayer", "numberOfPlayers": {"@type": "QuantitativeValue", "minValue": 2, "maxValue": 8}, "applicationCategory": "Game", "gamePlatform": "Web browser", "inLanguage": "en", "isPartOf": {"@type": "WebSite", "name": "Rift Arcade", "url": "https://rift-arcade.online/"}}</script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+    <style>html{background:#120826}</style>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" /></noscript>
     <link rel="stylesheet" href="/src/client/arcade.css" />
+    <!-- Cloudflare Web Analytics --><script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "8bb3a767914a49709f93340252c0bf57"}'></script><!-- End Cloudflare Web Analytics -->
   </head>
   <body class="game">
     <noscript><p style="padding:2rem;text-align:center">Cube Tag runs in your browser and needs JavaScript turned on.</p></noscript>
@@ -105,6 +108,7 @@
               <p id="roundNext" class="roundend__next"></p>
               <div class="roundend__row">
                 <span id="roundCount" class="roundend__count">5</span>
+                <button id="roundShare" class="lbtn" type="button">Share</button>
                 <a id="roundExit" class="lbtn lbtn--cyan" href="/">Exit</a>
               </div>
             </div>

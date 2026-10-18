@@ -74,7 +74,18 @@ function texturedBox(w: number, h: number, d: number, map: THREE.Texture, color:
 const iceMaterial = (env: THREE.Texture | undefined, opacity: number, color = 0x9fd8f5) =>
   new THREE.MeshStandardMaterial({ color, roughness: 0.08, metalness: 0.2, transparent: true, opacity, depthWrite: false, envMap: env ?? null, envMapIntensity: 0.8 });
 
-/** Draws one obstacle in the arena's look. Returns false for the plain neon look. */
+/** Ice blocks wait here until flushIce: three instanced draws for the whole rink instead of five meshes per block. */
+const ice = { body: [] as Spot[], core: [] as Spot[], spike: [] as Spot[] };
+
+/** Draw the ice blocks that skinObstacle collected. Call once after the last obstacle. */
+export function flushIce(parent: THREE.Object3D, env?: THREE.Texture) {
+  instanced(parent, new THREE.BoxGeometry(1, 1, 1), iceMaterial(env, 0.55), ice.body);
+  instanced(parent, new THREE.BoxGeometry(1, 1, 1), iceMaterial(env, 0.85, 0xe8fbff), ice.core);
+  instanced(parent, new THREE.ConeGeometry(1, 1, 5), iceMaterial(env, 0.9, 0xd8f4ff), ice.spike);
+  ice.body.length = ice.core.length = ice.spike.length = 0;
+}
+
+/** Draws one obstacle's body in the arena's look (its edges are the caller's). Returns false for the plain neon look. */
 export function skinObstacle(parent: THREE.Object3D, o: Obstacle, theme: ArenaTheme, edgeColor: number, iceEnv?: THREE.Texture) {
   const look = theme.floor;
   if (!look) { return false; }
@@ -93,18 +104,13 @@ export function skinObstacle(parent: THREE.Object3D, o: Obstacle, theme: ArenaTh
       g.add(m);
     }
   } else if (look === "ice") {
-    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), iceMaterial(iceEnv, 0.55));
-    body.position.y = h / 2;
-    const core = new THREE.Mesh(new THREE.BoxGeometry(w * 0.5, h * 0.9, d * 0.5), iceMaterial(iceEnv, 0.85, 0xe8fbff));
-    core.position.y = h / 2;
-    g.add(body, core);
-    // A few small crystals on top.
+    // A glassy block with a brighter core and a few small crystals on top. Collected, then drawn together by flushIce.
+    ice.body.push({ x: o.x, y: h / 2, z: o.y, sx: w, sy: h, sz: d });
+    ice.core.push({ x: o.x, y: h / 2, z: o.y, sx: w * 0.5, sy: h * 0.9, sz: d * 0.5 });
     const r = Math.max(3, Math.min(o.hw, o.hh) * 0.25);
     for (let i = 0; i < 3; i++) {
       const sh = 14 + rnd(18);
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(r, sh, 5), iceMaterial(iceEnv, 0.9, 0xd8f4ff));
-      spike.position.set((rnd(2) - 1) * (o.hw - r), h + sh / 2, (rnd(2) - 1) * (o.hh - r));
-      g.add(spike);
+      ice.spike.push({ x: o.x + (rnd(2) - 1) * (o.hw - r), y: h + sh / 2, z: o.y + (rnd(2) - 1) * (o.hh - r), sx: r, sy: sh, sz: r });
     }
   } else if (look === "neon") {
     // Dark tech block with a glowing cap; the cap sits inside the top face.
@@ -124,67 +130,75 @@ export function skinObstacle(parent: THREE.Object3D, o: Obstacle, theme: ArenaTh
     g.add(m);
   }
 
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d)),
-    new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.6 }),
-  );
-  edges.position.y = h / 2;
-  g.add(edges);
-  parent.add(g);
+  parent.add(g); // the glowing edges are batched by the arena (createBoxBatch)
   return true;
+}
+
+interface Spot { x: number; y: number; z: number; yaw?: number; tilt?: number; sx: number; sy: number; sz: number; color?: THREE.ColorRepresentation }
+
+/** Every copy of one shape in a single draw call (and a single shadow draw). The geometry is a unit shape; each spot scales it. */
+function instanced(parent: THREE.Object3D, geometry: THREE.BufferGeometry, material: THREE.Material, spots: Spot[]) {
+  if (!spots.length) { geometry.dispose(); material.dispose(); return; }
+  const mesh = new THREE.InstancedMesh(geometry, material, spots.length);
+  const dummy = new THREE.Object3D();
+  dummy.rotation.order = "YZX"; // turn about the vertical, then lean
+  const color = new THREE.Color();
+  spots.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, p.yaw ?? 0, p.tilt ?? 0);
+    dummy.scale.set(p.sx, p.sy, p.sz);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    if (p.color !== undefined) { mesh.setColorAt(i, color.set(p.color)); }
+  });
+  mesh.castShadow = true;
+  mesh.frustumCulled = false;
+  parent.add(mesh);
 }
 
 /** Boulders, ice shards or trees scattered around the sides and back of the arena, never in front where the camera is. */
 export function rimScenery(parent: THREE.Object3D, W: number, H: number, look: Look, lite: boolean) {
   const count = (look === "ice" ? 44 : 30) >> (lite ? 1 : 0);
+  const pylons: Spot[] = [], heads: Spot[] = [], rocks: Spot[] = [], shards: Spot[] = [], drifts: Spot[] = [], trunks: Spot[] = [], foliage: Spot[] = [];
+  const gemEdges = look === "neon" ? new THREE.EdgesGeometry(new THREE.OctahedronGeometry(40)) : undefined;
+  const gemMaterials = [new THREE.LineBasicMaterial({ color: 0x00e5ff }), new THREE.LineBasicMaterial({ color: 0xff2bd6 })];
   for (let n = 0; n < count; n++) {
     let x: number, z: number;
     do { x = -380 + rnd(W + 760); z = -420 + rnd(H + 420); } while (x >= -50 && x <= W + 50 && z >= -50);
-    const item = new THREE.Group();
-    item.position.set(x, 0, z);
-    item.rotation.y = rnd(Math.PI * 2);
+    const yaw = rnd(Math.PI * 2);
     if (look === "neon") {
       // A light pylon with a glowing head, and a hovering wire diamond above some.
       const hgt = 120 + rnd(180);
-      const pylon = new THREE.Mesh(new THREE.BoxGeometry(14, hgt, 14), new THREE.MeshStandardMaterial({ color: 0x16102b, roughness: 0.6 }));
-      pylon.position.y = hgt / 2;
-      const head = new THREE.Mesh(new THREE.BoxGeometry(22, 8, 22), new THREE.MeshBasicMaterial({ color: n % 2 ? 0xff2bd6 : 0x00e5ff }));
-      head.position.y = hgt + 4;
-      item.add(pylon, head);
+      pylons.push({ x, y: hgt / 2, z, yaw, sx: 14, sy: hgt, sz: 14 });
+      heads.push({ x, y: hgt + 4, z, yaw, sx: 22, sy: 8, sz: 22, color: n % 2 ? 0xff2bd6 : 0x00e5ff });
       if (n % 3 === 0) {
-        const gem = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.OctahedronGeometry(40)), new THREE.LineBasicMaterial({ color: n % 2 ? 0xff2bd6 : 0x00e5ff }));
-        gem.position.y = hgt + 90;
-        item.add(gem);
+        const gem = new THREE.LineSegments(gemEdges, gemMaterials[n % 2]);
+        gem.position.set(x, hgt + 90, z);
+        parent.add(gem);
       }
     } else if (look === "moon") {
       const r = 25 + rnd(55), sy = 0.5 + rnd(0.3);
-      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(r), new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.72, 0.05, 0.3 + rnd(0.15)), roughness: 1, flatShading: true }));
-      rock.scale.y = sy; rock.position.y = r * sy * 0.5;
-      item.add(rock);
+      rocks.push({ x, y: r * sy * 0.5, z, yaw, sx: r, sy: r * sy, sz: r, color: new THREE.Color().setHSL(0.72, 0.05, 0.3 + rnd(0.15)) });
+    } else if (look === "ice" && n % 2) {
+      // Every other piece of ice scenery is a snow drift instead.
+      const r = 60 + rnd(110);
+      drifts.push({ x, y: -4, z, yaw, sx: r, sy: r * (0.3 + rnd(0.15)), sz: r });
     } else if (look === "ice") {
       const r = 18 + rnd(30), sh = 80 + rnd(140);
-      const shard = new THREE.Mesh(new THREE.ConeGeometry(r, sh, 5), iceMaterial(undefined, 0.75, 0xbfe9ff));
-      shard.position.y = sh / 2; shard.rotation.z = (rnd(2) - 1) * 0.15;
-      item.add(shard);
+      shards.push({ x, y: sh / 2, z, yaw, tilt: (rnd(2) - 1) * 0.15, sx: r, sy: sh, sz: r });
     } else {
-      const foliage = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.36, 0.5, 0.12 + rnd(0.06)), roughness: 1, flatShading: true });
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(6, 9, 45, 6), new THREE.MeshStandardMaterial({ color: 0x4a3322, roughness: 1 }));
-      trunk.position.y = 22;
-      const low = new THREE.Mesh(new THREE.ConeGeometry(45 + rnd(25), 120 + rnd(40), 7), foliage);
-      low.position.y = 45 + 60;
-      const top = new THREE.Mesh(new THREE.ConeGeometry(30 + rnd(15), 90 + rnd(30), 7), foliage);
-      top.position.y = 45 + 120 + 30;
-      item.add(trunk, low, top);
+      const tint = new THREE.Color().setHSL(0.36, 0.5, 0.12 + rnd(0.06));
+      trunks.push({ x, y: 22, z, yaw, sx: 1, sy: 1, sz: 1 });
+      const r1 = 45 + rnd(25), h1 = 120 + rnd(40), r2 = 30 + rnd(15), h2 = 90 + rnd(30);
+      foliage.push({ x, y: 45 + 60, z, yaw, sx: r1, sy: h1, sz: r1, color: tint }, { x, y: 45 + 120 + 30, z, yaw, sx: r2, sy: h2, sz: r2, color: tint });
     }
-    if (look === "ice" && n % 2) {
-      // Every other piece of ice scenery is a snow drift instead.
-      item.clear();
-      const r = 60 + rnd(110);
-      const drift = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 8), new THREE.MeshStandardMaterial({ color: 0xe4f0fa, roughness: 1 }));
-      drift.scale.y = 0.3 + rnd(0.15); drift.position.y = -4;
-      item.add(drift);
-    }
-    item.traverse((m) => { m.castShadow = true; });
-    parent.add(item);
   }
+  // Unit shapes, one draw call per kind of thing.
+  instanced(parent, new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x16102b, roughness: 0.6 }), pylons);
+  instanced(parent, new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial(), heads);
+  instanced(parent, new THREE.DodecahedronGeometry(1), new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true }), rocks);
+  instanced(parent, new THREE.ConeGeometry(1, 1, 5), iceMaterial(undefined, 0.75, 0xbfe9ff), shards);
+  instanced(parent, new THREE.SphereGeometry(1, 16, 8), new THREE.MeshStandardMaterial({ color: 0xe4f0fa, roughness: 1 }), drifts);
+  instanced(parent, new THREE.CylinderGeometry(6, 9, 45, 6), new THREE.MeshStandardMaterial({ color: 0x4a3322, roughness: 1 }), trunks);
+  instanced(parent, new THREE.ConeGeometry(1, 1, 7), new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true }), foliage);
 }

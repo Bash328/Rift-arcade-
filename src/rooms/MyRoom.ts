@@ -9,8 +9,10 @@ import { MODES, modeOf, ORB_REACH, ORB_HEIGHT } from "../shared/modes.js";
 import { sanitizeName } from "../shared/names.js";
 import { navFor } from "./botNav.js";
 
-/** Public rooms are topped up with bots to this many players, so nobody waits alone. */
-const BOT_FILL = 4;
+/** Public rooms are topped up with bots to this many players, so nobody waits alone: a lone player gets four bots, and each human who joins sends one home. */
+const BOT_FILL = 5;
+/** Seconds a bot chases one player without tagging them before it goes after someone else. */
+const CHASE_GIVE_UP = 8;
 /** Seconds before the first bot joins a lonely player, then between the rest. */
 const BOT_FIRST_DELAY = 6;
 const BOT_NEXT_DELAY = 2;
@@ -381,27 +383,38 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     if (bot.hot) {
       // Chase the nearest player who can actually be tagged: the one who was just tagged and is protected from tag-backs
       // is skipped, or "it" would stand on them until the protection runs out and swap right back.
+      // Also skipped: anyone this bot has chased for CHASE_GIVE_UP seconds without catching (a runner who keeps getting away).
       const protectedId = this.safeLeft > 0 ? this.safeId : "";
-      for (const skip of [protectedId, ""]) {
-        let best = Infinity;
-        let target: Player | undefined;
-        for (const [otherId, other] of this.state.players) {
-          const d = Math.hypot(other.x - bot.x, other.y - bot.y);
-          if (otherId !== id && otherId !== skip && !other.hot && d < best) { best = d; target = other; }
-        }
-        if (target) { // with only two players the protected one is the only target
-          let [cx, cy] = toward(target.x, target.y);
-          // Several chasers going for the same player would end up as one stacked blob: keep a little apart.
+      const pick = () => {
+        for (const spare of [protectedId, ""]) { // with only two players the protected one is the only target
+          let best = Infinity;
+          let found: [string, Player] | undefined;
           for (const [otherId, other] of this.state.players) {
-            if (otherId === id || !other.hot) { continue; }
-            const gap = Math.hypot(bot.x - other.x, bot.y - other.y);
-            if (gap < 70) { cx += ((bot.x - other.x) / (gap || 1)) * 80; cy += ((bot.y - other.y) / (gap || 1)) * 80; }
+            const d = Math.hypot(other.x - bot.x, other.y - bot.y);
+            if (otherId !== id && otherId !== spare && !other.hot && !brain.skip.has(otherId) && d < best) { best = d; found = [otherId, other]; }
           }
-          return [cx, cy];
+          if (found) { return found; }
         }
+      };
+      let chosen = pick();
+      if (!chosen && brain.skip.size) { brain.skip.clear(); chosen = pick(); } // given up on everyone: start over with the nearest
+      if (!chosen) { return [0, 0]; }
+      const [targetId, target] = chosen;
+      const now = Date.now();
+      if (targetId !== brain.target) { brain.target = targetId; brain.targetSince = now; }
+      else if (now - brain.targetSince > CHASE_GIVE_UP * 1000) { brain.skip.add(targetId); brain.target = ""; }
+      let [cx, cy] = toward(target.x, target.y);
+      // Several chasers going for the same player would end up as one stacked blob: keep a little apart.
+      for (const [otherId, other] of this.state.players) {
+        if (otherId === id || !other.hot) { continue; }
+        const gap = Math.hypot(bot.x - other.x, bot.y - other.y);
+        if (gap < 70) { cx += ((bot.x - other.x) / (gap || 1)) * 80; cy += ((bot.y - other.y) / (gap || 1)) * 80; }
       }
-      return [0, 0];
+      return [cx, cy];
     }
+    // No longer chasing (tagged someone, or became a runner): the next chase starts fresh.
+    if (brain.skip.size) { brain.skip.clear(); }
+    brain.target = "";
 
     let threat: Player | undefined;
     let nearest = Infinity;

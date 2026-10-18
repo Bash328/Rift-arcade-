@@ -12,6 +12,7 @@ import { ARENAS, ARENA_BY_ID } from "../src/shared/arenas.js";
 import { inputBudget, InputPacer, MAX_BACKLOG } from "../src/rooms/inputPacing.js";
 import { sanitizeName, FALLBACK_NAME } from "../src/shared/names.js";
 import { Nav } from "../src/rooms/botNav.js";
+import { Predict } from "@colyseus/sdk/predict";
 
 const classic = ARENA_BY_ID.classic;
 /** The layouts are drawn for a 1500-wide arena; block positions scale with the real width (sizes do not). */
@@ -370,6 +371,8 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(sanitizeName("f.u.c.k"), FALLBACK_NAME, "punctuation does not hide a word");
     assert.strictEqual(sanitizeName("Sh1t"), FALLBACK_NAME, "look-alike characters do not either");
     assert.strictEqual(sanitizeName("Nova"), "Nova");
+    for (const bad of ["N1gg3r", "FAGGOT", "x_retard_x", "dildo", "p3d0phile"]) { assert.strictEqual(sanitizeName(bad), FALLBACK_NAME, bad); }
+    for (const fine of ["Swank", "Raccoon", "Spice", "Janus", "Class", "Granny"]) { assert.strictEqual(sanitizeName(fine), fine, fine + " is an ordinary name"); }
   });
 
   it("bots: a lonely player in a public room gets bots, a joining human sends one home, private rooms get none", async () => {
@@ -388,8 +391,10 @@ describe("testing your Colyseus app", () => {
     await settle(() => bots().length >= 2);
     (room as any).botWait = 100;
     await settle(() => bots().length >= 3);
-    assert.strictEqual(bots().length, 3, "topped up to 4 players");
-    assert.ok(room.state.players.size >= 4);
+    (room as any).botWait = 100;
+    await settle(() => bots().length >= 4);
+    assert.strictEqual(bots().length, 4, "a lone player gets four bots");
+    assert.ok(room.state.players.size >= 5);
 
     const bot = bots()[0];
     const before = { x: bot.x, y: bot.y };
@@ -397,8 +402,8 @@ describe("testing your Colyseus app", () => {
     assert.ok(Math.hypot(bot.x - before.x, bot.y - before.y) > 0 || room.state.it !== "", "bots are driven by the room");
 
     await colyseus.connectTo(room, { name: "Bo" });
-    await settle(() => bots().length <= 2);
-    assert.strictEqual(bots().length, 2, "one bot left when a second human joined");
+    await settle(() => bots().length <= 3);
+    assert.strictEqual(bots().length, 3, "one bot left when a second human joined");
 
     const priv = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic" });
     await colyseus.connectTo(priv, { name: "Cy" });
@@ -553,5 +558,34 @@ describe("testing your Colyseus app", () => {
         assert.ok(Math.hypot(x - tx, y - ty) <= 40, `${arena.id}: walked to (${tx}, ${ty}) in ${steps} steps`);
       }
     }
+  });
+
+  it("adaptive delay: Predict.track follows setDefaults({ delay }), so a raised delay makes a remote player trail further", async () => {
+    // The client (kit.ts trackRemote) relies on this SDK behaviour; this fails if an SDK upgrade changes it.
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic", mode: "tag" });
+    const mover = await colyseus.connectTo(room, { name: "Mover" });
+    const watcher = await colyseus.connectTo(room, { name: "Watcher" });
+    const predict = Predict.get(watcher, { mode: "lerp", delay: 60, smoothMs: 0 });
+    watcher.input<MoveInput>({ mode: "reliable" }); // the browser client has one too: it is what brings the server clock
+    const remote = watcher.state.players.get(mover.sessionId)!;
+    (predict as any).track(remote, "y");
+
+    const input = mover.input<MoveInput>({ mode: "reliable" });
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const drive = setInterval(() => { input.data.moveX = 0; input.data.moveY = 1; input.send(); }, 33);
+    const pump = setInterval(() => predict.tick(performance.now()), 16);
+    // Average distance the drawn position is behind the newest one over a short run (short: the arena has walls).
+    const lag = async () => {
+      let total = 0;
+      for (let i = 0; i < 12; i++) { await sleep(33); total += remote.y - predict.value(remote, "y"); }
+      return total / 12;
+    };
+    await sleep(300);
+    const before = await lag();
+    predict.setDefaults({ delay: 300 });
+    await sleep(200);
+    const after = await lag();
+    clearInterval(drive); clearInterval(pump);
+    assert.ok(after > before + 40, "lag before " + before.toFixed(0) + ", after " + after.toFixed(0) + " units");
   });
 });

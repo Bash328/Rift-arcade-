@@ -87,17 +87,26 @@ export function createStage(arenaEl: HTMLElement) {
   new ResizeObserver(resize).observe(arenaEl);
   resize();
 
-  // Adaptive resolution: ~2 seconds of consecutive slow frames lowers the render
-  // scale; ~10 seconds of fast ones raises it again. A single hitch changes nothing.
+  // Adaptive quality: ~2 seconds of consecutive slow frames takes one step down this ladder; ~10 seconds of
+  // fast ones raises the render scale again. A single hitch changes nothing.
+  //   resolution to 70%, then anti-aliasing off, then resolution to 50%, then the glow off.
+  let samples = LITE ? 2 : 4;
   let slow = 0;
   let fast = 0;
   function adaptQuality(frameMs: number) {
     if (frameMs > 40) { slow++; fast = 0; }
     else if (frameMs < 20) { fast++; slow = 0; }
     else { slow = 0; fast = 0; }
-    if (slow >= 60 && scale > 0.5) { scale = Math.max(0.5, scale * 0.85); slow = 0; resize(); }
-    // Still slow at the lowest resolution: give up the glow for the rest of the session.
-    else if (slow >= 60 && bloom.enabled) { bloom.enabled = false; slow = 0; }
+    if (slow >= 60) {
+      slow = 0;
+      if (scale > 0.7) { scale = Math.max(0.7, scale * 0.85); resize(); }
+      else if (samples > 0) {
+        samples = 0;
+        for (const target of [composer.renderTarget1, composer.renderTarget2]) { target.samples = 0; target.dispose(); } // reallocated without MSAA on next use
+      }
+      else if (scale > 0.5) { scale = Math.max(0.5, scale * 0.85); resize(); }
+      else if (bloom.enabled) { bloom.enabled = false; }
+    }
     else if (fast >= 600 && scale < 1) { scale = Math.min(1, scale * 1.1); fast = 0; resize(); }
   }
 
@@ -117,6 +126,55 @@ export function neonBox(
   return mesh;
 }
 
+/**
+ * Neon boxes collected and drawn as two objects: one instanced mesh for the solid bodies and one line set for
+ * every edge, instead of two draw calls (and two shadow draws) per box. `y` is the box centre. Leave `body`
+ * out for edges only (a textured block draws its own body); `edgeAlpha` below 1 draws softer edges.
+ */
+export function createBoxBatch() {
+  type Box = { w: number; h: number; d: number; x: number; y: number; z: number; edge: number; body?: number; alpha: number };
+  const boxes: Box[] = [];
+  return {
+    add(w: number, h: number, d: number, x: number, y: number, z: number, edge: number, body?: number, edgeAlpha = 1) {
+      boxes.push({ w, h, d, x, y, z, edge, body, alpha: edgeAlpha });
+    },
+    build(parent: THREE.Object3D) {
+      const solid = boxes.filter((b) => b.body !== undefined);
+      if (solid.length) {
+        const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ roughness: 0.6 }), solid.length);
+        const matrix = new THREE.Matrix4();
+        const color = new THREE.Color();
+        solid.forEach((b, i) => {
+          mesh.setMatrixAt(i, matrix.makeScale(b.w, b.h, b.d).setPosition(b.x, b.y, b.z));
+          mesh.setColorAt(i, color.set(b.body!));
+        });
+        mesh.castShadow = mesh.receiveShadow = true;
+        mesh.frustumCulled = false;
+        parent.add(mesh);
+      }
+      if (!boxes.length) { return; }
+      const unit = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)).attributes.position; // 24 corners = 12 edges
+      const positions = new Float32Array(boxes.length * unit.count * 3);
+      const colors = new Float32Array(boxes.length * unit.count * 4);
+      const tint = new THREE.Color();
+      boxes.forEach((b, n) => {
+        tint.set(b.edge);
+        for (let v = 0; v < unit.count; v++) {
+          const at = n * unit.count + v;
+          positions.set([unit.getX(v) * b.w + b.x, unit.getY(v) * b.h + b.y, unit.getZ(v) * b.d + b.z], at * 3);
+          colors.set([tint.r, tint.g, tint.b, b.alpha], at * 4);
+        }
+      });
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 4));
+      const lines = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true }));
+      lines.frustumCulled = false;
+      parent.add(lines);
+    },
+  };
+}
+
 /** A CC0 sprite from /fx (Kenney Particle Pack), loaded once. */
 export function loadFx(name: string): THREE.Texture {
   const texture = new THREE.TextureLoader().load(`/fx/${name}.png`);
@@ -127,44 +185,89 @@ export function loadFx(name: string): THREE.Texture {
 /**
  * Pooled glow sprites for trails and bursts. They blend additively, so with
  * bloom they read as light: "glow" is a soft dot, "star" a sparkle.
+ * Each kind is ONE Points object (a draw call for the lot, not one per sparkle) with a small shader
+ * that sizes every point in world units like a sprite, fading with its own alpha.
  */
 export function createParticles(scene: THREE.Scene) {
   const textures = { glow: loadFx("circle_05"), star: loadFx("star_04") };
   const sizeFactor = { glow: 3.2, star: 4.5 };
-  const pool = Array.from({ length: 300 }, () => {
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    sprite.visible = false;
-    scene.add(sprite);
-    return { sprite, vel: new THREE.Vector3(), life: 0, max: 1, size: 1, kind: "glow" as keyof typeof textures };
-  });
+  const vertexShader = `
+    attribute vec3 aColor; attribute float aSize; attribute float aAlpha;
+    uniform float uScale; varying vec3 vColor; varying float vAlpha;
+    void main() {
+      vColor = aColor; vAlpha = aAlpha;
+      vec4 view = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = aSize * uScale / -view.z;
+      gl_Position = projectionMatrix * view;
+    }`;
+  const fragmentShader = `
+    uniform sampler2D uMap; varying vec3 vColor; varying float vAlpha;
+    void main() { vec4 t = texture2D(uMap, gl_PointCoord); gl_FragColor = vec4(vColor * t.rgb, t.a * vAlpha); }`;
+
+  const tint = new THREE.Color();
+  const bufferSize = new THREE.Vector2();
+  function makePool(kind: keyof typeof textures, count: number) {
+    const geometry = new THREE.BufferGeometry();
+    const attrs = {
+      position: new THREE.BufferAttribute(new Float32Array(count * 3), 3),
+      aColor: new THREE.BufferAttribute(new Float32Array(count * 3), 3),
+      aSize: new THREE.BufferAttribute(new Float32Array(count), 1),
+      aAlpha: new THREE.BufferAttribute(new Float32Array(count), 1),
+    };
+    for (const [name, attr] of Object.entries(attrs)) { attr.setUsage(THREE.DynamicDrawUsage); geometry.setAttribute(name, attr); }
+    const material = new THREE.ShaderMaterial({
+      uniforms: { uMap: { value: textures[kind] }, uScale: { value: 1000 } },
+      vertexShader, fragmentShader, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const points = new THREE.Points(geometry, material);
+    points.frustumCulled = false; // the points move every frame; the bounding sphere would be stale
+    // Pixels per world unit at distance 1 for the current screen height and field of view.
+    points.onBeforeRender = (renderer, _scene, camera) => {
+      material.uniforms.uScale.value = renderer.getDrawingBufferSize(bufferSize).y * 0.5 * camera.projectionMatrix.elements[5];
+    };
+    scene.add(points);
+    const items = Array.from({ length: count }, () => ({ vel: new THREE.Vector3(), life: 0, max: 1, size: 1 }));
+    return { attrs, items, dirty: false };
+  }
+  const pools = { glow: makePool("glow", 220), star: makePool("star", 160) };
 
   return {
     emit(
       pos: THREE.Vector3, color: THREE.ColorRepresentation, vel: THREE.Vector3,
       life: number, size: number, kind: keyof typeof textures = "glow",
     ) {
-      const p = pool.find((q) => q.life <= 0);
-      if (!p) { return; }
-      p.sprite.position.copy(pos);
-      p.sprite.material.map = textures[kind];
-      p.sprite.material.color.set(color);
+      const pool = pools[kind];
+      const i = pool.items.findIndex((q) => q.life <= 0);
+      if (i < 0) { return; }
+      const p = pool.items[i];
+      pool.attrs.position.setXYZ(i, pos.x, pos.y, pos.z);
+      tint.set(color);
+      pool.attrs.aColor.setXYZ(i, tint.r, tint.g, tint.b);
       p.vel.copy(vel);
       p.life = p.max = life;
       p.size = size;
-      p.kind = kind;
-      p.sprite.visible = true;
+      pool.attrs.aSize.setX(i, size * sizeFactor[kind]);
+      pool.attrs.aAlpha.setX(i, 1);
+      pool.dirty = true;
+      pool.attrs.aColor.needsUpdate = true;
     },
     update(dt: number) {
-      for (const p of pool) {
-        if (p.life <= 0) { continue; }
-        p.life -= dt;
-        if (p.life <= 0) { p.sprite.visible = false; continue; }
-        const k = p.life / p.max;
-        p.sprite.position.addScaledVector(p.vel, dt);
-        p.sprite.scale.setScalar(p.size * sizeFactor[p.kind] * (0.4 + 0.6 * k));
-        p.sprite.material.opacity = k;
+      for (const [kind, pool] of Object.entries(pools) as [keyof typeof textures, (typeof pools)["glow"]][]) {
+        if (!pool.dirty) { continue; }
+        const { position, aSize, aAlpha } = pool.attrs;
+        let live = false;
+        pool.items.forEach((p, i) => {
+          if (p.life <= 0) { return; }
+          p.life -= dt;
+          if (p.life <= 0) { aAlpha.setX(i, 0); return; }
+          live = true;
+          const k = p.life / p.max;
+          position.setXYZ(i, position.getX(i) + p.vel.x * dt, position.getY(i) + p.vel.y * dt, position.getZ(i) + p.vel.z * dt);
+          aSize.setX(i, p.size * sizeFactor[kind] * (0.4 + 0.6 * k));
+          aAlpha.setX(i, k);
+        });
+        position.needsUpdate = aSize.needsUpdate = aAlpha.needsUpdate = true;
+        pool.dirty = live; // one last upload after the final one fades, then nothing until the next emit
       }
     },
   };
@@ -743,6 +846,46 @@ export function createDebugHud(arenaEl: HTMLElement, renderer: THREE.WebGLRender
         netLine();
     },
   };
+}
+
+/** How far behind the newest update other players are drawn: just enough to ride out this connection's jitter. */
+export const INTERP_BASE = LITE ? 100 : 80;
+const INTERP_MAX = 250;
+
+/**
+ * Other players are drawn `delay` ms behind the newest update, so a late or bunched-up update does not show.
+ * A steady connection needs little; a jittery one needs more. Once a second this measures how much the ping
+ * time wanders and sets the delay to `INTERP_BASE` plus that. It rises quickly when the connection gets rough
+ * and eases back slowly, so other players never visibly speed up or slow down.
+ * Needs the Predict to have been created with `smoothMs` and tracked through `trackRemote` (the delay is its default).
+ */
+export function adaptInterpolationDelay(
+  room: { ping(callback: (ms: number) => void): void },
+  predict: { setDefaults(options: { delay: number }): void },
+) {
+  const pings: number[] = [];
+  let delay = INTERP_BASE + 20; // start a little roomy until the first measurements are in
+  setInterval(() => {
+    if (document.hidden) { return; } // a background tab's timers are throttled: those pings say nothing about the network
+    try { room.ping((ms) => { pings.push(ms); if (pings.length > 12) { pings.shift(); } }); } catch { return; }
+    if (pings.length < 6) { return; }
+    const sorted = [...pings].sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1];
+    const wander = pings.map((p) => Math.abs(p - median)).sort((a, b) => a - b)[Math.floor(pings.length * 0.9)];
+    const goal = Math.min(INTERP_MAX, INTERP_BASE + wander);
+    delay = goal > delay ? Math.min(goal, delay + 20) : Math.max(goal, delay - 3);
+    predict.setDefaults({ delay: Math.round(delay) });
+  }, 1000);
+}
+
+/**
+ * Smooth `fields` of every player the way `attachAll` would, but on the Predict's default settings, so a later
+ * `setDefaults({ delay })` reaches them (`attachAll` freezes its own copy). Call inside the players' onAdd.
+ * ponytail: `track` is marked internal in the SDK; the "adaptive delay" test fails if an upgrade changes it.
+ */
+export function trackRemote(predict: object, player: object, fields: string[]) {
+  const track = (predict as { track(instance: object, field: string): unknown }).track.bind(predict);
+  for (const field of fields) { track(player, field); }
 }
 
 /** The game script is running: take down the "Loading" cover the page started with. */

@@ -2,7 +2,7 @@
 
 ## Where things stand (end of the 2026-10-17/18 sessions)
 
-Everything below is pushed to `main` (last commit `ac6419f`, 28 tests passing). Built so far:
+Everything below is pushed to `main` (last commit `ac6419f`; the changes listed below are on top and not pushed). Built so far:
 
 - **Cube Tag arenas** with their own look and feel: Neon Grid (circuit floor, light pylons), Moon Dunes (craters, stars, Earth, dust, drone), Ice Rink (hardest: very slippery, 56 blocks, snowfield, snow, wind), The Maze (hedges and stone, fireflies, trees, crickets). Arenas are 20% bigger.
 - **Modes** (rotate every round, or the host locks one): Cube Tag, Orb Rush, Infection. King of the Hill was built and removed (no real challenge). A mode intro card shows for everyone who joins; a banner shows each round.
@@ -25,19 +25,24 @@ Workflow note: changes are only pushed when asked ("push").
   - Risks: seeing the lower floors (fade the floor above a player beneath it), jump and landing prediction across floors, three times the tiles on phones (draw them as one batch).
   - Estimate: 2 to 3 days, then playtest on phones.
 
+## Built, not yet pushed or checked on a phone (2026-10-18)
+
+- Jitter-adaptive interpolation delay (`adaptInterpolationDelay` in kit.ts): the delay for other players follows how much the ping wanders, between 80 ms (100 on phones) and 250 ms. It needs the SDK's internal `Predict.track`; a test guards that.
+- Phone graphics: neon boxes, ice blocks and the rim scenery are instanced or batched, particles are two point systems instead of 300 sprites, and the quality ladder now also drops anti-aliasing. Draw calls on the desktop (all passes): classic 345 to 193, moon 313 to 232, ice 453 to 323 before the ice change (39 on a phone view after it), maze 286 to 106, neon 280 to 194.
+- Share button on the Cube Tag round-over card (Voidfall has no card yet).
+- Name blocklist extended with slurs and sexual terms.
+- The IT lamp shows only in Cube Tag and sits in the button row on phones, clear of the timer.
+- Bots: a lone player gets four bots (rooms fill to 5), and a chasing bot gives up on a runner after 8 seconds and goes for someone else.
+- Faster first paint: the Google Fonts stylesheet no longer blocks the page (the blank screen when opening from the home screen). iPhone still shows its own white or black splash until the page paints; a proper one needs launch images for each iPhone size.
+- Cloudflare Web Analytics beacon on the home page and both games (cookieless; read the numbers in the Cloudflare dashboard under Web Analytics).
+- Fixed: `inMatch` was used before it was declared (broke the dev server, which does not bundle).
+
 ## From the research report (`reports/Rift Arcade improvement roadmap.md`)
 
-- Cube Tag game modes: a `mode` field that rotates each round, Orb Rush and Infection are done; Falling Hazards is next (King of the Hill was tried and removed: no real challenge).
-- Jitter-adaptive interpolation delay (check first that the prediction library lets the delay change while the game runs).
-- Phone graphics: instance the scenery and `neonBox`, rebuild the 300-material particle pool, and drop anti-aliasing if phones are still slow.
-- Preset emotes and a share button on the round-over card.
-- Anonymous profile with wins, streaks and a daily/weekly leaderboard (needs a persistent disk on the host), then cosmetic unlocks.
-- Privacy-friendly analytics to measure return rate.
-- Load test the live server from another machine (`npm run loadtest:arcade`) to find the real capacity.
-- Extend the name blocklist (slurs were left out on purpose).
+- Falling Hazards mode: parked for now (King of the Hill was tried and removed: no real challenge).
+- Decided against: preset emotes, anonymous profiles and leaderboards.
+- Load test the live server (`npm run loadtest:arcade`) to find the real capacity; a PC or phone-hotspot run is fine, a result limited by the home connection says so.
 
 ## Check on real devices
 
-- The Maze look, the new Ice Rink difficulty, and the Earth's position on Moon Dunes.
-- Portrait lobby then landscape lock on Android; the rotate message after the game starts on iPhone.
-- Home screen cabinets in portrait.
+- Everything in the section above: the new particles and instanced scenery on a phone, the IT lamp row, the share button, how the adaptive delay feels on mobile data, and the bots.

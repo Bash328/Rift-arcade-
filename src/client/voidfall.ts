@@ -8,7 +8,7 @@ import { PLAYER_HALF, GRAVITY } from "../shared/constants.js";
 import { stepVoidEntity, GRID, TILE, VOID_SIZE, SOLID, CRACKING, GONE } from "../shared/void.js";
 import {
   NEON_CYAN, createStage, neonBox, createParticles, createControls,
-  runLobby, showRoomTag, wireBack, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, loadFx, SHADOW_MAP, type Sfx,
+  runLobby, showRoomTag, wireBack, createCameraRig, drawBoard, createAudio, jumpSounds, createFullscreen, createDebugHud, LITE, gameReady, showFatal, loadFx, SHADOW_MAP, INTERP_BASE, adaptInterpolationDelay, trackRemote, type Sfx,
 } from "./kit.js";
 import { Avatar } from "./avatars.js";
 
@@ -82,11 +82,12 @@ async function main() {
   audio.play("join");
   wireBack(room);
   debug.watch(room);
-  // Others are drawn `delay` ms behind the newest update so a late or bunched-up one does not show.
-  // Updates arrive every ~33 ms, so 100 ms is a cushion of 3 updates; phones get a little more.
-  const predict = Predict.get(room, { mode: "lerp", delay: LITE ? 130 : 100 });
+  // Others are drawn a little behind the newest update so a late or bunched-up one does not show;
+  // how far behind follows the connection (adaptInterpolationDelay). The spring (smoothMs) keeps their
+  // speed continuous even when the update stream is rough: ~65 ms of extra display lag.
+  const predict = Predict.get(room, { mode: "lerp", delay: INTERP_BASE + 20, smoothMs: 65 });
+  adaptInterpolationDelay(room, predict);
 
-  predict.attachAll("players", { mode: "lerp", fields: ["x", "y", "z"], smoothMs: 65 });
   const input = room.input<MoveInput>({ mode: "reliable" });
 
   // The first patch is what creates our own player.
@@ -109,8 +110,10 @@ async function main() {
 
   callbacks.onAdd("players", (player, sessionId) => {
     avatars.set(sessionId, new Avatar(scene, player.pet, player.hue));
+    trackRemote(predict, player, ["x", "y", "z"]);
   });
-  callbacks.onRemove("players", (_player, sessionId) => {
+  callbacks.onRemove("players", (player, sessionId) => {
+    predict.detach(player);
     avatars.get(sessionId)?.dispose();
     avatars.delete(sessionId);
   });
