@@ -33,7 +33,7 @@ Workflow note: changes are only pushed when asked ("push").
 - Name blocklist extended with slurs and sexual terms.
 - The IT lamp shows only in Cube Tag and sits in the button row on phones, clear of the timer.
 - Bots: a lone player gets four bots (rooms fill to 5), and a chasing bot gives up on a runner after 8 seconds and goes for someone else.
-- Faster first paint: the Google Fonts stylesheet no longer blocks the page (the blank screen when opening from the home screen). iPhone still shows its own white or black splash until the page paints; a proper one needs launch images for each iPhone size.
+- Faster first paint: the Google Fonts stylesheet no longer blocks the page (the blank screen when opening from the home screen). iPhone launch images (public/splash, 20 tiny palette PNGs, 152 KB in all, every iPhone size from the 8 to the 16 Pro Max in both orientations; no iPads) replace its white splash. iOS reads them when the app is added to the home screen, so re-add the app to see them. To change the look, regenerate the images (they were drawn in headless Chrome and shrunk with sharp) and keep the `<link>` tags in the three pages in step.
 - Cloudflare Web Analytics beacon on the home page and both games (cookieless; read the numbers in the Cloudflare dashboard under Web Analytics).
 - Fixed: `inMatch` was used before it was declared (broke the dev server, which does not bundle).
 
