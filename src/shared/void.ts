@@ -68,9 +68,9 @@ export const floorZ = (floor: number) => (floor === 0 ? 0 : -floor * FLOOR_GAP);
 
 /** Colours (and symbols) on the floor. */
 export const PARTY_COLOURS = 4;
-/** Seconds the called colour is shown before the other tiles drop: 1.2 every round (the start and the step are here to tune). */
-export const PARTY_CALL_START = 1.2;
-export const PARTY_CALL_STEP = 0;
+/** Seconds the called colour is shown before the other tiles drop: 5 at first, 0.4 less each call, never under 1.2 (all three are here to tune). */
+export const PARTY_CALL_START = 5;
+export const PARTY_CALL_STEP = 0.4;
 export const PARTY_CALL_MIN = 1.2;
 export const partyCallTime = (round: number) => Math.max(PARTY_CALL_MIN, PARTY_CALL_START - PARTY_CALL_STEP * (round - 1));
 /** How long the floor stays gone, and how long the new floor is shown before the next colour is called. */

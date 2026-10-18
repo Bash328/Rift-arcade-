@@ -1202,7 +1202,7 @@ describe("testing your Colyseus app", () => {
   });
 
   // ---------------- Block Party
-  it("Block Party rules: balanced shuffled floors, a countdown of 1.2 s, and an end to long games", () => {
+  it("Block Party rules: balanced shuffled floors, a countdown that starts at 5 s and shrinks to 1.2 s, and an end to long games", () => {
     for (let n = 0; n < 20; n++) {
       const floor = dealParty();
       assert.strictEqual(floor.length, CELLS);
@@ -1211,9 +1211,9 @@ describe("testing your Colyseus app", () => {
       assert.ok(counts.every((c) => c === 20 || c === 21), "every colour on about a quarter of the tiles: " + counts.join(","));
     }
     assert.notDeepStrictEqual(dealParty(), dealParty(), "a new floor is a new pattern");
-    assert.strictEqual(partyCallTime(1), 1.2, "the countdown is 1.2 seconds");
-    assert.strictEqual(partyCallTime(5), 1.2);
-    assert.strictEqual(partyCallTime(40), 1.2);
+    assert.strictEqual(partyCallTime(1), 5, "the first call has 5 seconds");
+    assert.ok(Math.abs(partyCallTime(5) - 3.4) < 1e-9, "0.4 less each call");
+    assert.strictEqual(partyCallTime(40), 1.2, "never shorter than 1.2 s");
     assert.strictEqual(partyExtraDrop(5), 0, "no extra drops in the first five calls");
     assert.ok(Math.abs(partyExtraDrop(6) - 0.1) < 1e-9);
     assert.strictEqual(partyExtraDrop(100), 0.85, "capped, so a safe tile always exists");
@@ -1238,7 +1238,7 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(room.state.partyRound, 1);
     const target = room.state.target;
     assert.ok(target >= 0 && target < 4, "a colour is called (" + target + ")");
-    assert.ok(room.state.callLeft > 1 && room.state.callLeft <= 1.2, "about 1.2 seconds on the clock (" + room.state.callLeft + ")");
+    assert.ok(room.state.callLeft > 4.8 && room.state.callLeft <= 5, "about five seconds on the clock (" + room.state.callLeft + ")");
     const before = [...room.state.kinds];
 
     // Both players stand on tiles of the called colour, so they survive the drop and the game keeps going.
@@ -1265,7 +1265,7 @@ describe("testing your Colyseus app", () => {
     for (let i = 0; i < Math.ceil(PARTY_RESET_TIME * 30) + 3 && room.state.partyStage === "reset"; i++) { step(); }
     assert.strictEqual(room.state.partyStage, "call");
     assert.strictEqual(room.state.partyRound, 2, "the second call");
-    assert.ok(room.state.callLeft > 1 && room.state.callLeft <= 1.2, "with the same short countdown (" + room.state.callLeft + ")");
+    assert.ok(room.state.callLeft > 4.4 && room.state.callLeft <= 4.6, "and it is shorter (" + room.state.callLeft + ")");
   });
 
   it("Block Party: from call 6 some called tiles crack and flash from the start; the other colours flash in the last 0.8 s", async () => {
@@ -1312,7 +1312,7 @@ describe("testing your Colyseus app", () => {
     const [sx, sy] = SQUARE_BOARD.centre(safe), [dx, dy] = SQUARE_BOARD.centre(doomed);
     Object.assign(ann, { x: sx, y: sy, z: 0, vz: 0 });
     Object.assign(bo, { x: dx, y: dy, z: 0, vz: 0 });
-    for (let i = 0; i < 36 + 150 && room.state.phase === "playing"; i++) { step(); }
+    for (let i = 0; i < 160 + 150 && room.state.phase === "playing"; i++) { step(); }
     assert.strictEqual(room.state.phase, "over", "the game ended");
     assert.ok(ann.alive && !bo.alive, "Ann (safe tile) lived, Bo (wrong colour) fell");
     assert.strictEqual(room.state.winner, "Ann");
@@ -1340,7 +1340,7 @@ describe("testing your Colyseus app", () => {
       const other = entries[1][1];
       const random = Math.random;
       Math.random = () => 0.5;
-      try { for (let i = 0; i < 36 + 20; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
+      try { for (let i = 0; i < 160 + 20; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
       if (bot.alive && bot.z === 0) { sharpSurvived++; }
       void other;
       await colyseus.cleanup();
@@ -1364,10 +1364,10 @@ describe("testing your Colyseus app", () => {
     };
     stand(a, safe[0]); stand(b, safe[0]); // Ann and Bo share a tile of the called colour
     stand(c, safe[1]);                    // Cy has one to herself
-    for (let i = 0; i < 40 && room.state.tiles[safe[0]] !== CRACKING; i++) { step(); }
+    for (let i = 0; i < 200 && room.state.tiles[safe[0]] !== CRACKING; i++) { step(); }
     assert.strictEqual(room.state.tiles[safe[0]], CRACKING, "the shared tile flashes with the doomed ones");
     assert.strictEqual(room.state.tiles[safe[1]], SOLID, "Cy's tile does not");
-    for (let i = 0; i < 36 + 120 && room.state.phase === "playing"; i++) { step(); }
+    for (let i = 0; i < 160 + 120 && room.state.phase === "playing"; i++) { step(); }
     const alive = (client: any) => room.state.players.get(client.sessionId)!.alive;
     assert.ok(!alive(a) && !alive(b), "both who shared the tile fell");
     assert.ok(alive(c), "the one on her own tile lived");
@@ -1381,10 +1381,10 @@ describe("testing your Colyseus app", () => {
     const [x, y] = SQUARE_BOARD.centre(safe[0]);
     Object.assign(room.state.players.get(a.sessionId)!, { x, y, z: 0, vz: 0 }); // Ann alone on a called tile
     Object.assign(room.state.players.get(b.sessionId)!, { x: SQUARE_BOARD.centre(safe[1])[0], y: SQUARE_BOARD.centre(safe[1])[1], z: 0, vz: 0 });
-    for (let i = 0; i < 40 && !room.state.tiles.some((v) => v === CRACKING); i++) { step(); } // the flash begins
+    for (let i = 0; i < 200 && !room.state.tiles.some((v) => v === CRACKING); i++) { step(); } // the flash begins
     assert.strictEqual(room.state.tiles[safe[0]], SOLID, "Ann's tile is not flashing: she is alone on it");
     Object.assign(room.state.players.get(b.sessionId)!, { x, y, z: 0, vz: 0 }); // Bo steps onto it
-    for (let i = 0; i < 36 + 120 && room.state.phase === "playing"; i++) { step(); }
+    for (let i = 0; i < 160 + 120 && room.state.phase === "playing"; i++) { step(); }
     assert.ok(!room.state.players.get(a.sessionId)!.alive && !room.state.players.get(b.sessionId)!.alive, "both lost the tile they shared");
   });
 
@@ -1414,7 +1414,7 @@ describe("testing your Colyseus app", () => {
       Object.assign(room.state.players.get(ann.sessionId)!, { x: nx, y: ny, z: 0, vz: 0, alive: true });
       const random = Math.random;
       Math.random = () => 0.5;
-      try { for (let i = 0; i < 36 + 10; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
+      try { for (let i = 0; i < 160 + 10; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
       if (bot.alive && SQUARE_BOARD.at(bot.x, bot.y) !== nearest) { apart++; }
       await colyseus.cleanup();
     }
