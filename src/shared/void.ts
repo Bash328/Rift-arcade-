@@ -68,15 +68,28 @@ export const floorZ = (floor: number) => (floor === 0 ? 0 : -floor * FLOOR_GAP);
 
 /** Colours (and symbols) on the floor. */
 export const PARTY_COLOURS = 4;
-/** Seconds the called colour is shown before the other tiles drop: 5 at first, 0.4 less each round, never under 1.2. */
-export const partyCallTime = (round: number) => Math.max(1.2, 5 - 0.4 * (round - 1));
+/** Seconds the called colour is shown before the other tiles drop: 1.2 every round (the start and the step are here to tune). */
+export const PARTY_CALL_START = 1.2;
+export const PARTY_CALL_STEP = 0;
+export const PARTY_CALL_MIN = 1.2;
+export const partyCallTime = (round: number) => Math.max(PARTY_CALL_MIN, PARTY_CALL_START - PARTY_CALL_STEP * (round - 1));
 /** How long the floor stays gone, and how long the new floor is shown before the next colour is called. */
 export const PARTY_DROP_TIME = 2.0;
 export const PARTY_RESET_TIME = 1.0;
-/** The tiles that are about to drop start flashing this many seconds before it happens (that is how the extra drops are told apart too). */
+/** The tiles of the other colours start flashing this many seconds before the drop. */
 export const PARTY_WARN = 0.8;
-/** From round 4 some tiles of the called colour drop too, more each round (they flash with the rest), so a game cannot go on for ever. */
-export const partyExtraDrop = (round: number) => (round <= 3 ? 0 : Math.min(0.85, 0.1 * (round - 3)));
+/**
+ * After the countdown reaches zero the drop waits this long, so a slow connection (a phone that shows you on the tile
+ * a little before the server does) does not cost you it.
+ */
+export const PARTY_GRACE = 0.2;
+/** Fewest called-colour tiles that always stay safe, however many are marked to crack. */
+export const PARTY_MIN_SAFE = 3;
+/**
+ * From call 6 a growing share of the called colour cracks too (10% more each call, up to 85%), so a game cannot go on for
+ * ever. Those tiles flash from the moment the colour is called, so you can pick one that is not cracking.
+ */
+export const partyExtraDrop = (round: number) => (round <= 5 ? 0 : Math.min(0.85, 0.1 * (round - 5)));
 /** A new floor: every colour on about a quarter of the tiles, shuffled. */
 export function dealParty(random: () => number = Math.random): number[] {
   const kinds = Array.from({ length: CELLS }, (_, i) => i % PARTY_COLOURS);

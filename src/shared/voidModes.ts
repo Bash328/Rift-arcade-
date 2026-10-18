@@ -30,7 +30,7 @@ export const VOID_MODES: VoidMode[] = [
   {
     id: "party", name: "Block Party", minHumans: 1, floors: 1, cells: CELLS,
     blurb: "A colour is called: be standing on it when the countdown ends.",
-    rules: "The floor is painted in four colours, each with its own symbol. A colour is called out with a countdown: get onto a tile of that colour before it ends, because every other tile drops away. The floor comes back in a new pattern, and the countdown gets shorter every round. The last player standing wins.",
+    rules: "The floor is painted in four colours, each with its own symbol. A colour is called out and you have about a second: get onto a tile of that colour, because every other tile drops away. Only one player fits on a tile: a tile with two or more players on it drops too, so spread out. Tiles about to drop flash, and from the sixth call some tiles of the called colour crack too: they flash from the start, so pick one that is not flashing. The floor comes back in a new pattern every call. The last player standing wins.",
   },
 ];
 

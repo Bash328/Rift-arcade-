@@ -19,16 +19,17 @@ Workflow note: changes are only pushed when asked ("push").
 
 - Tune Hex-A-Gone after playing it (the break times, the colour mix per floor, the 75 second sudden death, the floor gap). The numbers are in `src/shared/void.ts`.
 
-## Block Party (2026-10-18, built, not pushed, not yet seen on a real phone)
+## Block Party (2026-10-18; pushed, then changed after playtest, the changes are not pushed)
 
-- A third Voidfall mode (the modes now take turns in the order classic, Hex-A-Gone, Block Party). One 9x9 square floor painted in four colours, each with its own symbol (circle, triangle, square, star) so it does not rely on colour alone.
-- A colour is called ("STAND ON GREEN" with a countdown shown in that colour). Every tile that is not that colour drops, the empty floor shows for 2 seconds, a new shuffled floor comes back (1 second), and the next colour is called. The countdown starts at 5 seconds and shrinks by 0.4 a round down to 1.2. Last player standing wins.
-- The tiles that are about to drop flash white for the last 0.8 seconds. From call 4 a growing share of the called colour flashes too (10% more each call, up to 85%), so a game always ends and late deaths come from reacting too slowly, not luck.
-- Bots play it: they wait out a reaction time (sharp ones are quick, sloppy ones slow, now and then one hesitates), then run to the nearest safe tile of the called colour, and run again if their tile starts flashing. In a 60 game simulation with four bots a game lasted 46 to 111 seconds (median 64) and the first bot fell around call 9.
-- Plain solid colours and no glow, like Hex-A-Gone. Sound: a tick each second, a crack when the flash starts, a thump at the drop. The tunables are at the top of the Block Party part of `src/shared/void.ts`: `partyCallTime`, `PARTY_WARN`, `PARTY_DROP_TIME`, `partyExtraDrop`.
+- A third Voidfall mode (the modes take turns: classic, Hex-A-Gone, Block Party). One 9x9 square floor painted in four colours, each with its own symbol (circle, triangle, square, star), plain solid colours, no glow.
+- A colour is called ("STAND ON GREEN"). **The countdown is 1.2 seconds every call** (`PARTY_CALL_START`, `PARTY_CALL_STEP`, `PARTY_CALL_MIN` in `src/shared/void.ts`; it used to shrink from 5). Every tile that is not that colour drops, the empty floor shows for 2 seconds, a new shuffled floor comes back (1 second), and the next colour is called. Last player standing wins.
+- **One player per tile:** a tile with two or more players on it flashes with the doomed ones and drops with them on it. It is checked again at the drop, so stepping onto someone's tile after the flash still loses it.
+- **Fairness after a playtest report ("I stood on the right colour and still fell"):** checked in a simulation first, a player on a non-flashing called tile fell 0 times in 60 calls, so it was not a logic bug. The causes were (1) the extra drops, where a growing share of the called colour also cracks: they now start at call 6 (10% more each call, up to 85%, always leaving at least 3 safe tiles) and **flash from the moment the colour is called**, so you can choose one that is not cracking; and (2) lag: the drop now waits `PARTY_GRACE` (0.2 s) after the countdown shows zero, so a slow connection does not cost you the tile.
+- The tiles of the other colours flash in the last 0.8 seconds (`PARTY_WARN`).
+- Bots play it: they wait out a reaction time (sharp ones are quick, sloppy ones slow, now and then one hesitates), run to the nearest safe tile of the called colour that is not flashing and not taken (by a player or another bot), and run again if their tile starts flashing. In a 60 game simulation with four bots a game lasted a median of 60 seconds (46 to 100); the first bot fell around call 11; sharp bots fell far less often than sloppy ones.
+- Sound: a tick each second, a crack when the flash starts, a thump at the drop.
 - Next (agreed): Loot Loop is folded into Orb Rush. Orbs go into a carried stack, you bank them by stepping into the glowing ring in the middle of the arena, a rival who touches you steals half (2 seconds of protection after), carry cap 15, bots follow the same rules.
-- Also fixed: the red-tile stripes in Hex-A-Gone are now white (they were dark).
-- 75 tests (new: party rules, the call and drop and refill, the flash, a survivor winning, a bot finding the colour).
+- 79 tests.
 
 ## Hex-A-Gone looks like Fall Guys' (2026-10-18, not pushed)
 

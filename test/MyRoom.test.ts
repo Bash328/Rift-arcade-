@@ -8,7 +8,7 @@ import { stepEntity } from "../src/shared/movement.js";
 import {
   stepVoidEntity, tileAt, GRID, CELLS, HEX_CELLS, HEX_COLS, HEX_CENTRE, GONE, SOLID, CRACKING, HEX_FLOORS, RED, GREEN, YELLOW, floorZ, fallLimit, dealKinds, breakTime,
   suddenDeathGap, tileUnder, hexAt, hexCentre, boardOf, SUDDEN_DEATH_AT, FLOOR_GAP,
-  PARTY_COLOURS, partyCallTime, partyExtraDrop, dealParty, PARTY_DROP_TIME, PARTY_RESET_TIME, SQUARE_BOARD,
+  PARTY_COLOURS, partyCallTime, partyExtraDrop, dealParty, PARTY_DROP_TIME, PARTY_RESET_TIME, PARTY_GRACE, PARTY_MIN_SAFE, SQUARE_BOARD,
 } from "../src/shared/void.js";
 import { voidModeOf } from "../src/shared/voidModes.js";
 import type { VoidState } from "../src/rooms/schema/VoidState.js";
@@ -1202,7 +1202,7 @@ describe("testing your Colyseus app", () => {
   });
 
   // ---------------- Block Party
-  it("Block Party rules: balanced shuffled floors, a countdown that shrinks to a floor of 1.2 s, and an end to long games", () => {
+  it("Block Party rules: balanced shuffled floors, a countdown of 1.2 s, and an end to long games", () => {
     for (let n = 0; n < 20; n++) {
       const floor = dealParty();
       assert.strictEqual(floor.length, CELLS);
@@ -1211,11 +1211,11 @@ describe("testing your Colyseus app", () => {
       assert.ok(counts.every((c) => c === 20 || c === 21), "every colour on about a quarter of the tiles: " + counts.join(","));
     }
     assert.notDeepStrictEqual(dealParty(), dealParty(), "a new floor is a new pattern");
-    assert.strictEqual(partyCallTime(1), 5);
-    assert.ok(Math.abs(partyCallTime(5) - 3.4) < 1e-9);
-    assert.strictEqual(partyCallTime(40), 1.2, "never shorter than 1.2 s");
-    assert.strictEqual(partyExtraDrop(3), 0);
-    assert.ok(Math.abs(partyExtraDrop(4) - 0.1) < 1e-9);
+    assert.strictEqual(partyCallTime(1), 1.2, "the countdown is 1.2 seconds");
+    assert.strictEqual(partyCallTime(5), 1.2);
+    assert.strictEqual(partyCallTime(40), 1.2);
+    assert.strictEqual(partyExtraDrop(5), 0, "no extra drops in the first five calls");
+    assert.ok(Math.abs(partyExtraDrop(6) - 0.1) < 1e-9);
     assert.strictEqual(partyExtraDrop(100), 0.85, "capped, so a safe tile always exists");
     assert.strictEqual(PARTY_COLOURS, 4);
   });
@@ -1238,7 +1238,7 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(room.state.partyRound, 1);
     const target = room.state.target;
     assert.ok(target >= 0 && target < 4, "a colour is called (" + target + ")");
-    assert.ok(room.state.callLeft > 4 && room.state.callLeft <= 5, "about five seconds on the clock (" + room.state.callLeft + ")");
+    assert.ok(room.state.callLeft > 1 && room.state.callLeft <= 1.2, "about 1.2 seconds on the clock (" + room.state.callLeft + ")");
     const before = [...room.state.kinds];
 
     // Both players stand on tiles of the called colour, so they survive the drop and the game keeps going.
@@ -1247,7 +1247,7 @@ describe("testing your Colyseus app", () => {
       const [x, y] = SQUARE_BOARD.centre(safe[n]);
       Object.assign(room.state.players.get(client.sessionId)!, { x, y, z: 0, vz: 0 });
     });
-    for (let i = 0; i < 5 * 30 + 3 && room.state.partyStage === "call"; i++) { step(); }
+    for (let i = 0; i < Math.ceil((partyCallTime(1) + PARTY_GRACE) * 30) + 3 && room.state.partyStage === "call"; i++) { step(); }
     assert.strictEqual(room.state.partyStage, "drop");
     let kept = 0, gone = 0;
     room.state.tiles.forEach((state, i) => {
@@ -1265,33 +1265,42 @@ describe("testing your Colyseus app", () => {
     for (let i = 0; i < Math.ceil(PARTY_RESET_TIME * 30) + 3 && room.state.partyStage === "reset"; i++) { step(); }
     assert.strictEqual(room.state.partyStage, "call");
     assert.strictEqual(room.state.partyRound, 2, "the second call");
-    assert.ok(room.state.callLeft <= 4.6 && room.state.callLeft > 4.4, "and it is shorter (" + room.state.callLeft + ")");
+    assert.ok(room.state.callLeft > 1 && room.state.callLeft <= 1.2, "with the same short countdown (" + room.state.callLeft + ")");
   });
 
-  it("Block Party: the tiles that will drop flash in the last second, including a share of the called colour in later rounds", async () => {
+  it("Block Party: from call 6 some called tiles crack and flash from the start; the other colours flash in the last 0.8 s", async () => {
     const { room, a, b, step } = await partyRoom();
-    // Jump to a late call by hand.
     room.state.partyRound = 9;
-    (room as any).partyNewCall(); // round 10: about 70% of the called tiles are doomed too
+    (room as any).partyNewCall(); // call 10: half the called tiles crack
     const target = room.state.target;
     const kinds = [...room.state.kinds];
-    const safe = kinds.map((k, i) => [k, i]).filter(([k]) => k === target).map(([, i]) => i);
+    const called = kinds.map((k, i) => [k, i]).filter(([k]) => k === target).map(([, i]) => i);
+    const crackingNow = room.state.tiles.map((v, i) => [v, i]).filter(([v]) => v === CRACKING).map(([, i]) => i);
+    assert.ok(crackingNow.length > 0 && crackingNow.every((i) => kinds[i] === target), "some called tiles crack, from the start of the call");
+    assert.ok(called.length - crackingNow.length >= PARTY_MIN_SAFE, "at least " + PARTY_MIN_SAFE + " called tiles always stay safe");
+    assert.ok(room.state.tiles.every((v, i) => kinds[i] === target || v === SOLID), "the other colours are not flashing yet");
+    const safe = called.filter((i) => !crackingNow.includes(i));
     [a, b].forEach((client, n) => {
       const [x, y] = SQUARE_BOARD.centre(safe[n]);
       Object.assign(room.state.players.get(client.sessionId)!, { x, y, z: 0, vz: 0 });
     });
-    const callTime = room.state.callLeft;
-    for (let i = 0; i < Math.floor((callTime - 1.2) * 30); i++) { step(); }
-    assert.ok(room.state.tiles.every((v) => v === SOLID), "nothing flashes until the last 0.8 seconds");
-    for (let i = 0; i < 15 && !room.state.tiles.some((v) => v === CRACKING); i++) { step(); }
-    const flashing = room.state.tiles.map((v, i) => [v, i]).filter(([v]) => v === CRACKING).map(([, i]) => i);
-    assert.ok(room.state.tiles.every((v, i) => (kinds[i] !== target ? v === CRACKING : v === CRACKING || v === SOLID)), "every other colour flashes");
-    const doomedCalled = flashing.filter((i) => kinds[i] === target).length;
-    assert.ok(doomedCalled > 0 && doomedCalled < safe.length, doomedCalled + " of " + safe.length + " called tiles flash too");
-    for (let i = 0; i < 45 && room.state.partyStage === "call"; i++) { step(); }
+    for (let i = 0; i < Math.floor((partyCallTime(10) - 0.8) * 30) - 2; i++) { step(); }
+    assert.ok(room.state.tiles.every((v, i) => kinds[i] === target || v === SOLID), "still nothing flashing among the other colours");
+    for (let i = 0; i < 15 && room.state.tiles.every((v, i2) => kinds[i2] === target || v === SOLID); i++) { step(); }
+    assert.ok(room.state.tiles.every((v, i) => kinds[i] === target || v === CRACKING), "every other colour flashes in the last 0.8 seconds");
+    for (let i = 0; i < 60 && room.state.partyStage === "call"; i++) { step(); }
     assert.strictEqual(room.state.partyStage, "drop");
-    flashing.forEach((i) => assert.strictEqual(room.state.tiles[i], GONE, "a flashing tile drops"));
-    safe.filter((i) => !flashing.includes(i)).forEach((i) => assert.strictEqual(room.state.tiles[i], SOLID, "a called tile that did not flash stays"));
+    crackingNow.forEach((i) => assert.strictEqual(room.state.tiles[i], GONE, "a cracking called tile drops"));
+    safe.forEach((i) => assert.strictEqual(room.state.tiles[i], SOLID, "a called tile that was not cracking stays"));
+    assert.ok(room.state.players.get(a.sessionId)!.alive && room.state.players.get(b.sessionId)!.alive, "both players on safe called tiles lived");
+  });
+
+  it("Block Party: the drop waits a moment after the countdown shows zero, for slow connections", async () => {
+    const { room, step } = await partyRoom();
+    const countdown = partyCallTime(room.state.partyRound);
+    let ticks = 0;
+    while (room.state.partyStage === "call" && ticks < 200) { step(); ticks++; }
+    assert.ok(ticks / 30 >= countdown + PARTY_GRACE - 0.07, "the drop came after " + (ticks / 30).toFixed(2) + " s, not at " + countdown + " s");
   });
 
   it("Block Party: a player on a tile of the called colour survives, one on another colour falls out, and the survivor wins", async () => {
@@ -1303,7 +1312,7 @@ describe("testing your Colyseus app", () => {
     const [sx, sy] = SQUARE_BOARD.centre(safe), [dx, dy] = SQUARE_BOARD.centre(doomed);
     Object.assign(ann, { x: sx, y: sy, z: 0, vz: 0 });
     Object.assign(bo, { x: dx, y: dy, z: 0, vz: 0 });
-    for (let i = 0; i < 5 * 30 + 150 && room.state.phase === "playing"; i++) { step(); }
+    for (let i = 0; i < 36 + 150 && room.state.phase === "playing"; i++) { step(); }
     assert.strictEqual(room.state.phase, "over", "the game ended");
     assert.ok(ann.alive && !bo.alive, "Ann (safe tile) lived, Bo (wrong colour) fell");
     assert.strictEqual(room.state.winner, "Ann");
@@ -1331,11 +1340,84 @@ describe("testing your Colyseus app", () => {
       const other = entries[1][1];
       const random = Math.random;
       Math.random = () => 0.5;
-      try { for (let i = 0; i < 5 * 30 + 20; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
+      try { for (let i = 0; i < 36 + 20; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
       if (bot.alive && bot.z === 0) { sharpSurvived++; }
       void other;
       await colyseus.cleanup();
     }
     assert.strictEqual(sharpSurvived, 10, "a sharp bot found the colour every time (" + sharpSurvived + " of 10)");
+  });
+
+  it("Block Party: only one player fits on a tile: a shared tile flashes and drops with both of them on it", async () => {
+    const room = await colyseus.createRoom<VoidState>("void_room", { private: true, mode: "party" });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const b = await colyseus.connectTo(room, { name: "Bo" });
+    const c = await colyseus.connectTo(room, { name: "Cy" });
+    const step = () => (room as any).step({ dt: 1 / 30 });
+    for (let i = 0; i < 300 && room.state.phase !== "playing"; i++) { step(); }
+    assert.strictEqual(room.state.phase, "playing");
+    const target = room.state.target;
+    const safe = room.state.kinds.map((k, i) => [k, i]).filter(([k]) => k === target).map(([, i]) => i);
+    const stand = (client: any, tile: number) => {
+      const [x, y] = SQUARE_BOARD.centre(tile);
+      Object.assign(room.state.players.get(client.sessionId)!, { x, y, z: 0, vz: 0 });
+    };
+    stand(a, safe[0]); stand(b, safe[0]); // Ann and Bo share a tile of the called colour
+    stand(c, safe[1]);                    // Cy has one to herself
+    for (let i = 0; i < 40 && room.state.tiles[safe[0]] !== CRACKING; i++) { step(); }
+    assert.strictEqual(room.state.tiles[safe[0]], CRACKING, "the shared tile flashes with the doomed ones");
+    assert.strictEqual(room.state.tiles[safe[1]], SOLID, "Cy's tile does not");
+    for (let i = 0; i < 36 + 120 && room.state.phase === "playing"; i++) { step(); }
+    const alive = (client: any) => room.state.players.get(client.sessionId)!.alive;
+    assert.ok(!alive(a) && !alive(b), "both who shared the tile fell");
+    assert.ok(alive(c), "the one on her own tile lived");
+    assert.strictEqual(room.state.winner, "Cy");
+  });
+
+  it("Block Party: a player who steps onto someone's tile after the flash began still loses it when time runs out", async () => {
+    const { room, a, b, step } = await partyRoom();
+    const target = room.state.target;
+    const safe = room.state.kinds.map((k, i) => [k, i]).filter(([k]) => k === target).map(([, i]) => i);
+    const [x, y] = SQUARE_BOARD.centre(safe[0]);
+    Object.assign(room.state.players.get(a.sessionId)!, { x, y, z: 0, vz: 0 }); // Ann alone on a called tile
+    Object.assign(room.state.players.get(b.sessionId)!, { x: SQUARE_BOARD.centre(safe[1])[0], y: SQUARE_BOARD.centre(safe[1])[1], z: 0, vz: 0 });
+    for (let i = 0; i < 40 && !room.state.tiles.some((v) => v === CRACKING); i++) { step(); } // the flash begins
+    assert.strictEqual(room.state.tiles[safe[0]], SOLID, "Ann's tile is not flashing: she is alone on it");
+    Object.assign(room.state.players.get(b.sessionId)!, { x, y, z: 0, vz: 0 }); // Bo steps onto it
+    for (let i = 0; i < 36 + 120 && room.state.phase === "playing"; i++) { step(); }
+    assert.ok(!room.state.players.get(a.sessionId)!.alive && !room.state.players.get(b.sessionId)!.alive, "both lost the tile they shared");
+  });
+
+  it("Block Party bots keep to a tile of their own: they do not pick one a player is standing on", async () => {
+    let apart = 0;
+    for (let trial = 0; trial < 8; trial++) {
+      const room = await colyseus.createRoom<VoidState>("void_room", {});
+      const ann = await colyseus.connectTo(room, { name: "Ann" });
+      (room as any).setupMode("party");
+      (room as any).addBot();
+      (room as any).addBot();
+      const entries = [...room.state.players.entries()].filter(([id]) => id.startsWith("bot-"));
+      const [botId, bot] = entries[0];
+      const other = entries[1][1];
+      other.alive = false;
+      room.state.phase = "playing";
+      (room as any).partyNewCall();
+      (room as any).bots.get(botId).skill = 2;
+      const target = room.state.target;
+      const wrong = room.state.kinds.findIndex((k) => k !== target);
+      const [wx, wy] = SQUARE_BOARD.centre(wrong);
+      Object.assign(bot, { x: wx, y: wy, z: 0, vz: 0 });
+      // Ann stands on the called-colour tile nearest the bot, which is the one the bot would want.
+      let nearest = -1, best = Infinity;
+      room.state.kinds.forEach((k, i) => { if (k === target) { const [cx, cy] = SQUARE_BOARD.centre(i); const d = Math.hypot(cx - wx, cy - wy); if (d < best) { best = d; nearest = i; } } });
+      const [nx, ny] = SQUARE_BOARD.centre(nearest);
+      Object.assign(room.state.players.get(ann.sessionId)!, { x: nx, y: ny, z: 0, vz: 0, alive: true });
+      const random = Math.random;
+      Math.random = () => 0.5;
+      try { for (let i = 0; i < 36 + 10; i++) { (room as any).step({ dt: 1 / 30 }); } } finally { Math.random = random; }
+      if (bot.alive && SQUARE_BOARD.at(bot.x, bot.y) !== nearest) { apart++; }
+      await colyseus.cleanup();
+    }
+    assert.strictEqual(apart, 8, "the bot found a free tile every time (" + apart + " of 8)");
   });
 });

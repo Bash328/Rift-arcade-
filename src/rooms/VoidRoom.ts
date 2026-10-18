@@ -8,7 +8,7 @@ import { TICK_RATE, PETS, BOT_NAMES, ROUND_END_PAUSE, READY_LOCK } from "../shar
 import {
   TILE, SOLID, CRACKING, GONE, CRACK_TIME, LAND_GRACE, FLOOR_GAP, SUDDEN_DEATH_AT, VOID_SIZE,
   boardOf, SQUARE_BOARD, tileUnder, floorsOf, floorOf, floorZ, fallLimit, dealKinds, breakTime, suddenDeathGap, stepVoidEntity, type VoidInput,
-  PARTY_COLOURS, PARTY_DROP_TIME, PARTY_RESET_TIME, PARTY_WARN, partyCallTime, partyExtraDrop, dealParty,
+  PARTY_COLOURS, PARTY_DROP_TIME, PARTY_RESET_TIME, PARTY_WARN, PARTY_GRACE, PARTY_MIN_SAFE, partyCallTime, partyExtraDrop, dealParty,
 } from "../shared/void.js";
 import { VOID_MODES, voidModeOf } from "../shared/voidModes.js";
 
@@ -464,27 +464,52 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
     s.target = Math.floor(Math.random() * PARTY_COLOURS);
     s.partyStage = "call";
     this.partyWarned = false;
-    this.partyClock = partyCallTime(s.partyRound);
-    s.callLeft = Math.round(this.partyClock * 10) / 10;
+    // The clock runs a little past the countdown the players see (see PARTY_GRACE).
+    this.partyClock = partyCallTime(s.partyRound) + PARTY_GRACE;
+    s.callLeft = Math.round((this.partyClock - PARTY_GRACE) * 10) / 10;
+    // From call 6 some tiles of the called colour crack too. They flash from the start, so a player can choose one that is not cracking.
+    const called: number[] = [];
+    for (let i = 0; i < s.tiles.length; i++) { if (s.kinds[i] === s.target && s.tiles[i] === SOLID) { called.push(i); } }
+    const extra = partyExtraDrop(s.partyRound);
+    let doomed = Math.min(Math.round(called.length * extra), Math.max(0, called.length - PARTY_MIN_SAFE));
+    while (doomed > 0) {
+      const i = called.splice(Math.floor(Math.random() * called.length), 1)[0];
+      s.tiles[i] = CRACKING;
+      doomed--;
+    }
+  }
+
+  /** Block Party: how many living players stand on each tile (a player in the air counts where they will land). */
+  private partyOccupancy(): Map<number, number> {
+    const counts = new Map<number, number>();
+    for (const p of this.state.players.values()) {
+      if (!p.alive || p.z < -LAND_GRACE) { continue; }
+      const i = SQUARE_BOARD.at(p.x, p.y);
+      if (i >= 0) { counts.set(i, (counts.get(i) ?? 0) + 1); }
+    }
+    return counts;
   }
 
   /** Block Party: count down the call; then drop every tile that is not the called colour, show the empty floor for a moment, and bring a new one back. */
   private partyTick(dt: number) {
     const s = this.state;
     this.partyClock -= dt;
-    s.callLeft = Math.max(0, Math.round(this.partyClock * 10) / 10);
-    // In the last second the tiles that are going to drop start flashing: every other colour, and a share of the called
-    // one that grows as the game goes on. That share is chosen here, so players can see which called tiles to avoid.
-    if (s.partyStage === "call" && !this.partyWarned && this.partyClock <= PARTY_WARN) {
+    // What the players see counts down to zero, then holds there for PARTY_GRACE while the drop waits.
+    s.callLeft = s.partyStage === "call" ? Math.max(0, Math.round((this.partyClock - PARTY_GRACE) * 10) / 10) : Math.max(0, Math.round(this.partyClock * 10) / 10);
+    // In the last 0.8 s the tiles of every other colour start flashing, and so does any tile with two or more players on it
+    // (only one player fits on a tile). A share of the called colour was already flashing from the start of the call.
+    if (s.partyStage === "call" && !this.partyWarned && this.partyClock - PARTY_GRACE <= PARTY_WARN) {
       this.partyWarned = true;
-      const extra = partyExtraDrop(s.partyRound);
+      const crowd = this.partyOccupancy();
       for (let i = 0; i < s.tiles.length; i++) {
-        if (s.tiles[i] === SOLID && (s.kinds[i] !== s.target || Math.random() < extra)) { s.tiles[i] = CRACKING; }
+        if (s.tiles[i] === SOLID && (s.kinds[i] !== s.target || (crowd.get(i) ?? 0) > 1)) { s.tiles[i] = CRACKING; }
       }
     }
     if (this.partyClock > 0) { return; }
     if (s.partyStage === "call") {
-      for (let i = 0; i < s.tiles.length; i++) { if (s.tiles[i] === CRACKING) { s.tiles[i] = GONE; } }
+      // Whoever is sharing a tile when time runs out loses it, even if they moved there after the flash started.
+      const crowd = this.partyOccupancy();
+      for (let i = 0; i < s.tiles.length; i++) { if (s.tiles[i] === CRACKING || (crowd.get(i) ?? 0) > 1) { s.tiles[i] = GONE; } }
       s.partyStage = "drop";
       this.partyClock = PARTY_DROP_TIME;
     } else if (s.partyStage === "drop") {
@@ -513,15 +538,19 @@ export class VoidRoom extends Room<{ state: VoidState, input: MoveInput }> {
       brain.retarget = skill.react[0] + Math.random() * (skill.react[1] - skill.react[0]);
       return IDLE;
     }
-    if (brain.goal >= 0 && s.tiles[brain.goal] !== SOLID) { brain.goal = -1; } // the tile it was heading for is about to drop: look again
+    // Only one player fits on a tile: another player standing on it, or another bot heading for it, makes it a bad choice.
+    const taken = (i: number) =>
+      [...s.players.values()].some((p) => p !== bot && p.alive && p.z >= -LAND_GRACE && SQUARE_BOARD.at(p.x, p.y) === i)
+      || [...this.bots.values()].some((b) => b !== brain && b.goal === i);
+    if (brain.goal >= 0 && (s.tiles[brain.goal] !== SOLID || taken(brain.goal))) { brain.goal = -1; } // about to drop, or someone else got there: look again
     if (brain.goal < 0) {
-      if (s.kinds[here] === s.target && s.tiles[here] === SOLID) { return IDLE; } // already on a safe one
+      if (s.kinds[here] === s.target && s.tiles[here] === SOLID && !taken(here)) { return IDLE; } // already on a safe one, and alone
       brain.retarget -= dt;
       if (brain.retarget > 0) { return IDLE; }
       if (Math.random() < skill.slip * 3) { brain.retarget = 0.35; return IDLE; } // a moment's hesitation
       let best = Infinity;
       for (let i = 0; i < s.tiles.length; i++) {
-        if (s.kinds[i] !== s.target || s.tiles[i] !== SOLID) { continue; } // not the colour, or flashing (about to drop)
+        if (s.kinds[i] !== s.target || s.tiles[i] !== SOLID || taken(i)) { continue; } // not the colour, flashing (about to drop), or taken
         const [cx, cy] = SQUARE_BOARD.centre(i);
         const d = Math.hypot(cx - bot.x, cy - bot.y) + Math.random() * 60 * skill.noise; // sloppy bots do not always find the closest
         if (d < best) { best = d; brain.goal = i; }
