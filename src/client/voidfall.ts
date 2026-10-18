@@ -174,12 +174,9 @@ async function main() {
     }
   };
 
-  // The names list: bots that sit a Hex-A-Gone round out are not shown.
   let boardKey = "";
   function refreshBoard() {
-    const hex = room.state.mode === "hex";
     const rows = [...room.state.players.entries()]
-      .filter(([, p]) => !(hex && p.name.startsWith("BOT ")))
       .map(([id, p]) => ({ id, name: p.name, hue: p.hue, alive: p.alive }))
       .sort((a, b) => Number(b.alive) - Number(a.alive));
     const key = JSON.stringify(rows);

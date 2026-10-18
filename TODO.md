@@ -17,13 +17,20 @@ Workflow note: changes are only pushed when asked ("push").
 
 ## Next up
 
-- **Bots for Hex-A-Gone**: they sit those rounds out today, which is why the mode needs two humans. Bots that read tile colours, choose between floors and drop down on purpose.
 - Tune Hex-A-Gone after playing it (the break times, the colour mix per floor, the 75 second sudden death, the fade radius). The numbers are in `src/shared/void.ts`.
 - Hexagon tiles instead of squares (a visual swap: the tile grid stays square).
 
+## Hex-A-Gone bots (2026-10-18, not pushed)
+
+- The bots now play Hex-A-Gone, so the two-human rule is gone: a lone player in quick play gets it too (it takes turns with classic).
+- A bot waits on its tile until about 0.5 to 0.75 seconds before it breaks, then steps to the best neighbour. A tile is worth more the longer it lasts (colour and floor: green beats red), the bigger the island of solid tiles it sits in, and the fewer other players are near it.
+- Dropping down on purpose: a bot steps into a gap that has a solid tile on the floor below, when that beats what is left on its floor (more so once sudden death has begun). It never drops where nothing is below.
+- Same three skill levels as before (sharp bots read the tiles faster and hesitate less). In a 40 round simulation with four bots, rounds lasted 15 to 30 seconds (median 22), bots moved between floors about twice each per round, and sudden death never had to start.
+- 4 new tests (green over red, a drop onto the floor below, no drop into nothing, a 12 round long run); 68 tests in all. The Hex-A-Gone bot tests pin the dice for the drop, because a sharp bot can still hesitate once in about 200 decisions.
+
 ## Hex-A-Gone (2026-10-18, not pushed, not yet seen on a real phone)
 
-- A Voidfall mode that takes turns with classic each round (a private room's host can lock one in the lobby). Needs 2 or more humans in a public room; bots sit it out and are hidden from the name list.
+- A Voidfall mode that takes turns with classic each round (a private room's host can lock one in the lobby). Public rooms start it from the second round (the bots play it, see the bots section above).
 - Three full floors 120 units apart (243 tiles). Fall through a gap onto the floor below, or out if there is no tile. Each tile has a kind (green about 2s, yellow about 1.2s, red about 0.5s at the top; the middle floor is 15% faster and the bottom 30%), dealt at random each round and sent to the phones; the nine tiles under the start ring are never red. Cracking tiles flash white and shake, red tiles also have stripes.
 - You see lower floors because the floors above fade (a see-through dither, so they stay opaque and in the right order) in a circle of 260 units around you, and the camera follows your floor.
 - Sudden death after 75 seconds: one random solid tile cracks every second, down to four a second, on a floor somebody is on.

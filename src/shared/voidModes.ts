@@ -20,7 +20,7 @@ export const VOID_MODES: VoidMode[] = [
     rules: "Every tile cracks the moment you land on it and drops away a second later, so keep moving and hop across gaps. The last player standing wins.",
   },
   {
-    id: "hex", name: "Hex-A-Gone", minHumans: 2, floors: 3,
+    id: "hex", name: "Hex-A-Gone", minHumans: 1, floors: 3,
     blurb: "Three floors. Green tiles last, red ones go almost at once.",
     rules: "Three floors of tiles. A tile starts breaking when you land on it, and its colour says how fast: green about 2 seconds, yellow about 1, red almost at once. Fall through a gap and you land on the floor below, or you are out if there is no tile there. After a while tiles start cracking on their own. The last player standing wins.",
   },
