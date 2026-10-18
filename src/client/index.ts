@@ -21,6 +21,9 @@ const roundEndEl = document.getElementById("roundEnd")!;
 const roundWinnerEl = document.getElementById("roundWinner")!;
 const roundNextEl = document.getElementById("roundNext")!;
 const roundCountEl = document.getElementById("roundCount")!;
+const roundRulesEl = document.getElementById("roundRules")!;
+const roundReadyEl = document.getElementById("roundReady") as HTMLButtonElement;
+const roundReadyCountEl = document.getElementById("roundReadyCount")!;
 const modeBannerEl = document.getElementById("modeBanner")!;
 const modeNameEl = document.getElementById("modeName")!;
 const modeBlurbEl = document.getElementById("modeBlurb")!;
@@ -347,6 +350,10 @@ async function main() {
   const input = room.input<MoveInput>({ mode: "reliable" });
   wireBack(room);
   document.getElementById("roundExit")!.addEventListener("click", (e) => { e.preventDefault(); void leaveToLobby(room); });
+  // Ready: the next round starts as soon as everyone has pressed it, so nobody reading the rules falls behind.
+  const sayReady = () => { if (!roundReadyEl.disabled) { room.send("ready"); } };
+  roundReadyEl.addEventListener("click", sayReady);
+  addEventListener("keydown", (e) => { if (e.key === "Enter" && !roundEndEl.hidden && (e.target as HTMLElement).tagName !== "INPUT") { sayReady(); } });
   // Share the result: the share sheet on phones, else copy the text and link. It links to the game, not the room (which ends).
   const shareEl = document.getElementById("roundShare") as HTMLButtonElement;
   shareEl.addEventListener("click", async () => {
@@ -558,8 +565,14 @@ async function main() {
     roundEndEl.hidden = !winner;
     if (winner) {
       roundWinnerEl.textContent = winner === me?.name ? "You win!" : `${winner} wins!`;
-      roundNextEl.textContent = room.state.locked ? "Next round starts in" : `Next: ${arenaOf(room.state.nextArena).name}`;
+      const next = modeOf(room.state.nextMode);
+      roundNextEl.textContent = `Next: ${next.name} on ${arenaOf(room.state.nextArena).name}`;
+      roundRulesEl.textContent = next.rules;
       roundCountEl.textContent = String(room.state.nextIn);
+      const everyone = [...room.state.players.values()];
+      roundReadyCountEl.textContent = `${everyone.filter((p) => p.ready).length} of ${everyone.length} ready`;
+      roundReadyEl.disabled = !!me?.ready;
+      roundReadyEl.textContent = me?.ready ? "Ready!" : "Ready";
     }
     statusEl.textContent = winner
       ? ""

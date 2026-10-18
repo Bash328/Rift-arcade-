@@ -3,7 +3,7 @@ import { MyRoomState, Player, Orb, MoveInput } from "./schema/MyRoomState.js";
 import { freeRoomCode, assertRoomCapacity } from "./roomCode.js";
 import { InputPacer } from "./inputPacing.js";
 import { stepEntity } from "../shared/movement.js";
-import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, PETS } from "../shared/constants.js";
+import { TICK_RATE, PLAYER_HALF, TAG_COOLDOWN, ROUND_END_PAUSE, READY_LOCK, PETS } from "../shared/constants.js";
 import { ARENAS, arenaOf, type Arena } from "../shared/arenas.js";
 import { MODES, modeOf, ORB_REACH, ORB_HEIGHT } from "../shared/modes.js";
 import { sanitizeName } from "../shared/names.js";
@@ -21,8 +21,29 @@ const TAG_BACK_BLOCK = 2;
 const IDLE_INPUT = { moveX: 0, moveY: 0, jump: 0 };
 const BOT_NAMES = ["Pip", "Moss", "Dot", "Bolt", "Zig", "Fizz", "Nova", "Taco"];
 
+/**
+ * How good a bot is. `react`: seconds between re-aims. `idle`: chance of pausing at a re-aim. `slip`: chance of a wrong
+ * turn lasting half a second. `juke`: chance, at each re-aim with a chaser close, of a quick sidestep. `lead`: seconds ahead of a runner it aims. Every bot moves at the same speed as a player.
+ */
+const SKILLS = [
+  { react: [0.3, 0.5], idle: 0.05, slip: 0.08, lead: 0, juke: 0 },          // sloppy
+  { react: [0.2, 0.32], idle: 0.02, slip: 0.03, lead: 0.15, juke: 0.03 },   // steady
+  { react: [0.12, 0.2], idle: 0.005, slip: 0.01, lead: 0.35, juke: 0.1 },   // sharp
+];
+/** Chance a new bot is sloppy, steady or sharp: sloppy ones are rare, so the room stays a challenge. */
+const SKILL_ODDS = [0.1, 0.45, 0.45];
+
 /** What a bot is doing: how it steers, and a stuck check that makes it hop and turn. */
-interface BotBrain { dirX: number; dirY: number; retarget: number; stuckClock: number; lastX: number; lastY: number; unstick: number; altX: number; altY: number; scatter: number; jump: boolean; target: string; targetSince: number; skip: Set<string> }
+interface BotBrain {
+  dirX: number; dirY: number; retarget: number; stuckClock: number; lastX: number; lastY: number; unstick: number; altX: number; altY: number;
+  scatter: number; jump: boolean; target: string; targetSince: number; skip: Set<string>;
+  /** Index into SKILLS. */
+  skill: number;
+  /** A slip in progress: seconds left and the direction it goes. */
+  slipLeft: number; slipX: number; slipY: number;
+  /** Where a runner is heading (time it expires in ms, distances to it for stepping). */
+  goalX: number; goalY: number; goalUntil: number; goalDist?: Int16Array;
+}
 
 export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   /** A client sending more than this per second is disconnected (inputs arrive ~30/s). */
@@ -58,8 +79,12 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
   private orbSeq = 0;
 
   messages = {
-    // movement arrives through the input buffer above — register handlers here
-    // only for things that are not inputs (chat, emotes, …).
+    // movement arrives through the input buffer above; this is for everything that is not an input.
+    /** "Ready" on the winner card: the next round starts as soon as every player has pressed it (or the wait runs out). */
+    ready: (client: Client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (player && this.overLeft > 0 && this.overLeft <= ROUND_END_PAUSE - READY_LOCK) { player.ready = true; }
+    },
   };
 
   async onCreate(options: any) {
@@ -105,6 +130,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       hue: (n * 137.5 + 200) % 360,
       pet: n % PETS.length,
       hot: false,
+      ready: false,
     }));
     if (this.state.mode === "tag" && !this.state.it) { this.setIt(client.sessionId); }
   }
@@ -163,6 +189,8 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
 
     if (this.overLeft > 0) {
       this.overLeft -= ctx.dt;
+      // Everyone ready: no need to wait out the rest.
+      if (this.overLeft > 0 && this.state.players.size > 0 && [...this.state.players.values()].every((p) => p.ready)) { this.overLeft = 0; }
       this.state.nextIn = Math.max(0, Math.ceil(this.overLeft));
       if (this.overLeft <= 0) { this.newRound(); }
       return;
@@ -293,8 +321,14 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       hue: (slot * 137.5 + 200) % 360,
       pet: slot % PETS.length,
       hot: false,
+      ready: this.overLeft > 0, // bots never hold the next round up
     }));
-    this.bots.set(id, { dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0, scatter: NaN, jump: false, target: "", targetSince: 0, skip: new Set() });
+    let roll = Math.random();
+    const skill = SKILL_ODDS.findIndex((odds) => (roll -= odds) < 0);
+    this.bots.set(id, {
+      dirX: 0, dirY: 0, retarget: 0, stuckClock: 0, lastX: 0, lastY: 0, unstick: 0, altX: 0, altY: 0, scatter: NaN, jump: false, target: "", targetSince: 0, skip: new Set(),
+      skill: skill < 0 ? 1 : skill, slipLeft: 0, slipX: 0, slipY: 0, goalX: 0, goalY: 0, goalUntil: 0,
+    });
     if (this.state.mode === "tag" && !this.state.it) { this.setIt(id); }
   }
 
@@ -309,14 +343,22 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       const bot = this.state.players.get(id);
       if (!bot) { continue; }
 
+      const skill = SKILLS[brain.skill];
       brain.retarget -= dt;
+      brain.slipLeft = Math.max(0, brain.slipLeft - dt);
       if (brain.retarget <= 0) {
-        brain.retarget = 0.25 + Math.random() * 0.2;
+        brain.retarget = skill.react[0] + Math.random() * (skill.react[1] - skill.react[0]);
         const [vx, vy] = this.steer(id, bot, brain);
-        const idle = Math.random() < 0.04;
+        const idle = Math.random() < skill.idle;
         brain.dirX = idle || Math.abs(vx) < 20 ? 0 : Math.sign(vx);
         brain.dirY = idle || Math.abs(vy) < 20 ? 0 : Math.sign(vy);
+        // Now and then a wrong turn, like a person: rare for sharp bots, more often for sloppy ones.
+        if (brain.slipLeft <= 0 && Math.random() < skill.slip) {
+          brain.slipLeft = 0.5;
+          brain.slipX = Math.floor(Math.random() * 3) - 1; brain.slipY = Math.floor(Math.random() * 3) - 1;
+        }
       }
+      if (brain.slipLeft > 0) { brain.dirX = brain.slipX; brain.dirY = brain.slipY; }
 
       // Pinned against a block: hop and turn a random way for half a second.
       brain.stuckClock += dt;
@@ -390,8 +432,11 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
           let best = Infinity;
           let found: [string, Player] | undefined;
           for (const [otherId, other] of this.state.players) {
-            const d = Math.hypot(other.x - bot.x, other.y - bot.y);
-            if (otherId !== id && otherId !== spare && !other.hot && !brain.skip.has(otherId) && d < best) { best = d; found = [otherId, other]; }
+            if (otherId === id || otherId === spare || other.hot || brain.skip.has(otherId)) { continue; }
+            // Nearest counts most. A person is worth chasing from further off than another bot (so a sharp bot does not
+            // just farm the weaker bots), and the player who tagged this bot is not worth a straight rematch.
+            const d = Math.hypot(other.x - bot.x, other.y - bot.y) * (this.bots.has(otherId) ? 1 : 0.7) * (this.state.mode === "tag" && otherId === this.safeId ? 2.5 : 1);
+            if (d < best) { best = d; found = [otherId, other]; }
           }
           if (found) { return found; }
         }
@@ -403,7 +448,12 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       const now = Date.now();
       if (targetId !== brain.target) { brain.target = targetId; brain.targetSince = now; }
       else if (now - brain.targetSince > CHASE_GIVE_UP * 1000) { brain.skip.add(targetId); brain.target = ""; }
-      let [cx, cy] = toward(target.x, target.y);
+      // Aim where the runner is heading, as far ahead as this bot's skill allows (kept inside the arena).
+      const lead = SKILLS[brain.skill].lead;
+      let [cx, cy] = toward(
+        Math.min(Math.max(target.x + target.vx * lead, 40), arena.width - 40),
+        Math.min(Math.max(target.y + target.vy * lead, 40), arena.height - 40),
+      );
       // Several chasers going for the same player would end up as one stacked blob: keep a little apart.
       for (const [otherId, other] of this.state.players) {
         if (otherId === id || !other.hot) { continue; }
@@ -422,14 +472,35 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
       const d = Math.hypot(bot.x - other.x, bot.y - other.y);
       if (other.hot && d < nearest) { nearest = d; threat = other; }
     }
-    if (threat && nearest < 450) {
-      const step = nearest < 40 ? null : nav.step(nav.distancesTo(threat.x, threat.y), bot.x, bot.y, false);
+    if (threat) {
+      // Runners never stand still and never run into a corner: head for open ground the chaser cannot reach first,
+      // re-planned every second or two (at once when the chaser is close) and when the bot gets there.
+      const now = Date.now();
+      if (nearest < 220 || now > brain.goalUntil || Math.hypot(bot.x - brain.goalX, bot.y - brain.goalY) < 50) {
+        const goal = nav.fleeGoal(nav.distancesTo(bot.x, bot.y), nav.distancesTo(threat.x, threat.y));
+        if (goal) {
+          brain.goalX = goal.x; brain.goalY = goal.y;
+          brain.goalDist = nav.distancesTo(goal.x, goal.y);
+          brain.goalUntil = now + 1200 + Math.random() * 1200;
+        } else { brain.goalUntil = 0; brain.goalDist = undefined; }
+      }
+      // A chaser right behind: now and then a sharp bot dodges sideways (toward the roomier side) instead of running straight.
+      if (nearest < 150 && nearest >= 40 && brain.slipLeft <= 0 && Math.random() < SKILLS[brain.skill].juke) {
+        const px = -(threat.y - bot.y) / nearest, py = (threat.x - bot.x) / nearest; // sideways to the line from the chaser
+        const side = nav.roomAt(bot.x + px * 80, bot.y + py * 80) >= nav.roomAt(bot.x - px * 80, bot.y - py * 80) ? 1 : -1;
+        brain.slipLeft = 0.3;
+        brain.slipX = Math.abs(px) > 0.38 ? side * Math.sign(px) : 0;
+        brain.slipY = Math.abs(py) > 0.38 ? side * Math.sign(py) : 0;
+      }
+      const step = brain.goalDist && nearest >= 40 ? nav.step(brain.goalDist, bot.x, bot.y, true) : null;
       if (step && (step.vx || step.vy)) {
-        // The way that gets furthest from the chaser by the shortest route around the walls.
         vx = step.vx; vy = step.vy;
         brain.jump = step.hop;
         brain.scatter = NaN;
       } else {
+        // No safe spot to plan for (boxed in): fall back to the furthest neighbouring cell.
+        const away = nearest < 40 ? null : nav.step(nav.distancesTo(threat.x, threat.y), bot.x, bot.y, false);
+        if (away && (away.vx || away.vy)) { vx = away.vx; vy = away.vy; brain.jump = away.hop; brain.scatter = NaN; } else {
         vx = bot.x - threat.x; vy = bot.y - threat.y;
         // Standing on top of a chaser gives no direction to run: pick one at random and keep it until clear.
         if (nearest < 40) {
@@ -439,6 +510,7 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
         const edge = 160; // steer back toward the middle when near a wall
         if (bot.x < edge || bot.x > arena.width - edge) { vx += (arena.width / 2 - bot.x) * 2; }
         if (bot.y < edge || bot.y > arena.height - edge) { vy += (arena.height / 2 - bot.y) * 2; }
+        }
       }
     }
     // Don't pile up on another runner (even when nobody is chasing): bots on top of each other look like one glitching cube.
@@ -458,13 +530,14 @@ export class MyRoom extends Room<{ state: MyRoomState, input: MoveInput }> {
     this.state.winner = best?.name ?? "";
     this.overLeft = ROUND_END_PAUSE;
     this.state.nextIn = ROUND_END_PAUSE;
+    for (const [id, player] of this.state.players) { player.ready = this.bots.has(id); }
     // A room the host locked stays put; any other moves on to a different arena and mode.
     this.state.nextArena = this.lockedArena ?? this.pickArena(this.state.arena);
     this.state.nextMode = this.lockedMode ?? this.pickMode(this.state.mode);
   }
 
   private newRound() {
-    for (const player of this.state.players.values()) { player.score = 0; }
+    for (const player of this.state.players.values()) { player.score = 0; player.ready = false; }
     this.state.arena = this.state.nextArena;
     this.state.mode = this.state.nextMode;
     // The mode chosen at the end of the last round may no longer have enough players.

@@ -12,6 +12,8 @@ export class Nav {
   readonly cols: number;
   readonly rows: number;
   private readonly kind: Uint8Array;
+  /** Walkable cells in the 9 x 9 block around each cell: low in corners, against walls and in dead ends. */
+  private readonly room: Uint8Array;
 
   constructor(arena: Arena) {
     this.cols = Math.ceil(arena.width / CELL);
@@ -29,6 +31,19 @@ export class Nav {
             if (k === WALL || this.kind[i] === FREE) { this.kind[i] = k; } // a tall block makes the cell a wall whatever else covers it
           }
         }
+      }
+    }
+    this.room = new Uint8Array(this.cols * this.rows);
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        let free = 0;
+        for (let dr = -4; dr <= 4; dr++) {
+          for (let dc = -4; dc <= 4; dc++) {
+            const nc = c + dc, nr = r + dr;
+            if (nc >= 0 && nr >= 0 && nc < this.cols && nr < this.rows && this.kind[nr * this.cols + nc] !== WALL) { free++; }
+          }
+        }
+        this.room[r * this.cols + c] = free;
       }
     }
   }
@@ -66,6 +81,27 @@ export class Nav {
     }
     return dist;
   }
+
+  /**
+   * Where a runner should head: a cell it can reach well before the chaser, far from the chaser (credit stops at
+   * 24 cells, so beyond that open ground wins over distance), with plenty of room around it so it is never a corner
+   * or a dead end. At least `minTravel` cells away, so a runner keeps moving instead of settling. Null if nothing qualifies.
+   */
+  fleeGoal(fromBot: Int16Array, fromThreat: Int16Array, minTravel = 6): { x: number; y: number } | null {
+    let best = -Infinity, bestCell = -1;
+    for (let i = 0; i < this.kind.length; i++) {
+      const b = fromBot[i], t = fromThreat[i];
+      if (b < minTravel || t < 0 || this.kind[i] === WALL || b > 30 || b + 3 >= t) { continue; }
+      const score = Math.min(t, 24) - 0.25 * b + this.room[i] * 0.25 + Math.random() * 3;
+      if (score > best) { best = score; bestCell = i; }
+    }
+    if (bestCell < 0) { return null; }
+    const c = bestCell % this.cols, r = (bestCell - c) / this.cols;
+    return { x: (c + 0.5) * CELL, y: (r + 0.5) * CELL };
+  }
+
+  /** How roomy the ground is at (x, y), 0 to 81. */
+  roomAt(x: number, y: number) { return this.room[this.index(x, y)]; }
 
   /**
    * The neighbouring cell to step to from (x, y): the closest to the BFS target when `closer`, otherwise the

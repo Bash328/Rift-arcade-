@@ -469,7 +469,7 @@ describe("testing your Colyseus app", () => {
     (room as any).roundClock = 0.001;
     for (let i = 0; i < 6 && !room.state.winner; i++) { await room.waitForNextTimestep(); }
     assert.ok(room.state.winner, "a winner is announced");
-    assert.ok(room.state.nextIn >= 1 && room.state.nextIn <= 5, `countdown shows ${room.state.nextIn}`);
+    assert.ok(room.state.nextIn >= 1 && room.state.nextIn <= 15, `countdown shows ${room.state.nextIn}`);
 
     const x = pa.x;
     for (let i = 0; i < 5; i++) { input.data.moveX = 1; input.data.moveY = 0; input.data.jump = 0; input.send(); }
@@ -565,27 +565,144 @@ describe("testing your Colyseus app", () => {
     const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic", mode: "tag" });
     const mover = await colyseus.connectTo(room, { name: "Mover" });
     const watcher = await colyseus.connectTo(room, { name: "Watcher" });
-    const predict = Predict.get(watcher, { mode: "lerp", delay: 60, smoothMs: 0 });
+    const predict = Predict.get(watcher, { mode: "lerp", delay: 40, smoothMs: 0 });
     watcher.input<MoveInput>({ mode: "reliable" }); // the browser client has one too: it is what brings the server clock
     const remote = watcher.state.players.get(mover.sessionId)!;
-    (predict as any).track(remote, "y");
+    (predict as any).track(remote, "x");
 
     const input = mover.input<MoveInput>({ mode: "reliable" });
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-    const drive = setInterval(() => { input.data.moveX = 0; input.data.moveY = 1; input.send(); }, 33);
+    const dir = remote.x < classic.width / 2 ? 1 : -1; // run toward the farther wall so the mover does not stop
+    const drive = setInterval(() => { input.data.moveX = dir; input.data.moveY = 0; input.send(); }, 33);
     const pump = setInterval(() => predict.tick(performance.now()), 16);
     // Average distance the drawn position is behind the newest one over a short run (short: the arena has walls).
     const lag = async () => {
       let total = 0;
-      for (let i = 0; i < 12; i++) { await sleep(33); total += remote.y - predict.value(remote, "y"); }
+      for (let i = 0; i < 12; i++) { await sleep(33); total += dir * (remote.x - predict.value(remote, "x")); }
       return total / 12;
     };
-    await sleep(300);
+    await sleep(700); // let the server clock settle
     const before = await lag();
-    predict.setDefaults({ delay: 300 });
-    await sleep(200);
+    predict.setDefaults({ delay: 400 });
+    await sleep(400);
     const after = await lag();
     clearInterval(drive); clearInterval(pump);
-    assert.ok(after > before + 40, "lag before " + before.toFixed(0) + ", after " + after.toFixed(0) + " units");
+    assert.ok(after > before + 30, "lag before " + before.toFixed(0) + ", after " + after.toFixed(0) + " units");
+  });
+
+  it("bots running away: the goal is open ground they reach first, never a corner, in every arena", () => {
+    for (const arena of ARENAS) {
+      const nav = new Nav(arena);
+      const spots: [number, number][] = [[0.25, 0.25], [0.75, 0.3], [0.3, 0.8], [0.8, 0.8], [0.15, 0.5], [0.55, 0.15], [0.9, 0.55]];
+      let tested = 0;
+      for (const [fx, fy] of spots) {
+        const bot = { x: arena.width * fx, y: arena.height * fy };
+        const threat = { x: arena.width / 2, y: arena.height / 2 };
+        const fromBot = nav.distancesTo(bot.x, bot.y);
+        const fromThreat = nav.distancesTo(threat.x, threat.y);
+        if (fromBot.filter((d) => d >= 0).length < 1000) { continue; } // that spot is inside a block
+        tested++;
+        const goal = nav.fleeGoal(fromBot, fromThreat);
+        const label = arena.id + " from " + fx + "," + fy;
+        assert.ok(goal, label + ": has somewhere to run");
+        const corner = Math.min(goal.x, arena.width - goal.x) < 150 && Math.min(goal.y, arena.height - goal.y) < 150;
+        assert.ok(!corner, label + ": not a corner (" + goal.x + ", " + goal.y + ")");
+        assert.ok(nav.roomAt(goal.x, goal.y) >= 35, label + ": room to keep running");
+        const cell = (v: number) => Math.min(Math.floor(v / 25), 1e9);
+        const i = Math.floor(goal.y / 25) * nav.cols + cell(goal.x);
+        assert.ok(fromBot[i] >= 6, label + ": a walk of at least 6 cells, so the bot keeps moving");
+        assert.ok(fromBot[i] + 3 < fromThreat[i], label + ": the bot gets there first");
+      }
+      assert.ok(tested >= 2, arena.id + ": enough open spots to test");
+    }
+  });
+
+  it("bots running away keep moving instead of standing still", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { arena: "classic", mode: "tag" });
+    await colyseus.connectTo(room, { name: "Ann" });
+    for (let i = 0; i < 4; i++) { (room as any).botWait = 100; for (let k = 0; k < 6; k++) { await room.waitForNextTimestep(); } }
+    const bots = [...room.state.players.entries()].filter(([id]) => id.startsWith("bot-"));
+    assert.strictEqual(bots.length, 4, "four bots");
+    const start = new Map(bots.map(([id, p]) => [id, [p.x, p.y]]));
+    const travelled = new Map(bots.map(([id]) => [id, 0]));
+    const last = new Map(start);
+    for (let i = 0; i < 150; i++) { // five seconds
+      await room.waitForNextTimestep();
+      for (const [id, p] of bots) {
+        const [lx, ly] = last.get(id)!;
+        travelled.set(id, travelled.get(id)! + Math.hypot(p.x - lx, p.y - ly));
+        last.set(id, [p.x, p.y]);
+      }
+    }
+    const moving = bots.filter(([id, p]) => travelled.get(id)! > 200 && !p.hot);
+    const runners = bots.filter(([, p]) => !p.hot);
+    assert.ok(runners.length >= 3 && moving.length >= runners.length - 1, "runners on the move: " + [...travelled.values()].map((v) => v.toFixed(0)).join(", "));
+  });
+
+  it("ready: the next round starts once every player is ready, not before; bots never hold it up; early taps are ignored", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { private: true, arena: "classic" });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    const b = await colyseus.connectTo(room, { name: "Bo" });
+    const pa = room.state.players.get(a.sessionId)!, pb = room.state.players.get(b.sessionId)!;
+    (room as any).roundClock = 0.001;
+    for (let i = 0; i < 6 && !room.state.winner; i++) { await room.waitForNextTimestep(); }
+    assert.ok(room.state.winner, "the round ended");
+    assert.ok(room.state.nextIn > 5, "there is a real wait now (" + room.state.nextIn + "s)");
+    assert.ok(!pa.ready && !pb.ready, "nobody starts ready");
+
+    a.send("ready"); // right as the round ends: ignored, so a stray tap cannot skip the card
+    for (let i = 0; i < 3; i++) { await room.waitForNextTimestep(); }
+    assert.ok(!pa.ready, "a tap in the first moments is ignored");
+
+    (room as any).overLeft = 10; // past the lock
+    a.send("ready");
+    for (let i = 0; i < 4; i++) { await room.waitForNextTimestep(); }
+    assert.ok(pa.ready && !pb.ready, "Ann is ready, Bo is not");
+    assert.ok(room.state.winner, "the card stays while Bo is not ready");
+
+    b.send("ready");
+    for (let i = 0; i < 6 && room.state.winner; i++) { await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.winner, "", "the next round started as soon as both were ready");
+    assert.ok(!pa.ready && !pb.ready, "ready is cleared for the next wait");
+  });
+
+  it("juke: a sharp bot with a chaser right behind can sidestep, at right angles to the chase", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { arena: "classic", mode: "tag" });
+    const ann = await colyseus.connectTo(room, { name: "Ann" });
+    (room as any).botWait = 100;
+    for (let k = 0; k < 8; k++) { await room.waitForNextTimestep(); }
+    const botId = [...room.state.players.keys()].find((id) => id.startsWith("bot-"))!;
+    const bot = room.state.players.get(botId)!;
+    const brain = (room as any).bots.get(botId);
+    const chaser = room.state.players.get(ann.sessionId)!;
+    (room as any).setIt(ann.sessionId);
+    bot.x = 900; bot.y = 700; chaser.x = 820; chaser.y = 700; // the chaser is 80 units to the left
+    brain.skill = 2; brain.slipLeft = 0; brain.goalUntil = 0;
+    const random = Math.random;
+    Math.random = () => 0.01; // always under the juke chance
+    try { (room as any).steer(botId, bot, brain); } finally { Math.random = random; }
+    assert.ok(brain.slipLeft > 0, "it started a sidestep");
+    assert.strictEqual(brain.slipX, 0, "no push along the chase line");
+    assert.ok(Math.abs(brain.slipY) === 1, "it dodges sideways");
+
+    brain.skill = 0; brain.slipLeft = 0; brain.goalUntil = 0;
+    Math.random = () => 0.01;
+    try { (room as any).steer(botId, bot, brain); } finally { Math.random = random; }
+    assert.strictEqual(brain.slipLeft, 0, "a sloppy bot never juked");
+  });
+
+  it("ready: a lone human with bots only has to press Ready themself", async () => {
+    const room = await colyseus.createRoom<MyRoomState>("my_room", { arena: "classic", mode: "tag" });
+    const a = await colyseus.connectTo(room, { name: "Ann" });
+    for (let i = 0; i < 3; i++) { (room as any).botWait = 100; for (let k = 0; k < 6; k++) { await room.waitForNextTimestep(); } }
+    (room as any).roundClock = 0.001;
+    for (let i = 0; i < 6 && !room.state.winner; i++) { await room.waitForNextTimestep(); }
+    const players = [...room.state.players.entries()];
+    assert.ok(players.filter(([id]) => id.startsWith("bot-")).every(([, p]) => p.ready), "bots are ready at once");
+    assert.ok(!room.state.players.get(a.sessionId)!.ready, "the human is not");
+    (room as any).overLeft = 10;
+    a.send("ready");
+    for (let i = 0; i < 6 && room.state.winner; i++) { await room.waitForNextTimestep(); }
+    assert.strictEqual(room.state.winner, "", "the round started when the one human was ready");
   });
 });

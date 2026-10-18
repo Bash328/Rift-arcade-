@@ -37,6 +37,20 @@ Workflow note: changes are only pushed when asked ("push").
 - Cloudflare Web Analytics beacon on the home page and both games (cookieless; read the numbers in the Cloudflare dashboard under Web Analytics).
 - Fixed: `inMatch` was used before it was declared (broke the dev server, which does not bundle).
 
+## Bots, second pass (2026-10-18, not pushed)
+
+- Runners no longer stand still or run into corners: they plan a route to open ground they reach before the chaser (`fleeGoal` in botNav.ts), re-planned every 1 to 2 seconds, so they keep moving.
+- Three skill levels per bot (sloppy 10%, steady 45%, sharp 45%): reaction time, aiming ahead of a runner, pauses and rare wrong turns. Same speed as a player.
+- A chasing bot prefers people over other bots (so a sharp bot does not farm the weak ones), will not rematch whoever just tagged it, and still gives up a chase after 8 seconds.
+- The IT lamp sits beside the names.
+- Juking: sharp bots (10% a re-aim) and steady ones (3%) sidestep, toward the roomier side, when a chaser is within 150 units.
+- Ready status (Cube Tag): the winner card now waits up to 15 seconds and shows the next mode, its rules and "x of y ready". Each player presses Ready (or Enter); the round starts as soon as every human has, bots always count as ready, and a tap in the first 1.5 seconds is ignored. Voidfall has no winner card yet, so no Ready there.
+
+## Ideas to consider
+
+- Temporary power-ups (for example a speed boost or a shield for a few seconds).
+- Hex-A-Gone: design grilled up to round 1 (see the memory note); resume at round 2.
+
 ## From the research report (`reports/Rift Arcade improvement roadmap.md`)
 
 - Falling Hazards mode: parked for now (King of the Hill was tried and removed: no real challenge).

@@ -17,5 +17,7 @@ export const PLAYER_SPEED = 300;
 /** Seconds a freshly tagged player can't be tagged back. */
 export const TAG_COOLDOWN = 1;
 
-/** How long the winner banner shows before the next round. */
-export const ROUND_END_PAUSE = 5;
+/** The longest the winner card waits before the next round: it starts sooner once every player is ready. */
+export const ROUND_END_PAUSE = 15;
+/** Seconds after a round ends during which Ready is ignored, so a jump tap just as the round ends cannot skip the winner card. */
+export const READY_LOCK = 1.5;

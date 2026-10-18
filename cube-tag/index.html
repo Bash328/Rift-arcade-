@@ -75,7 +75,6 @@
             <button id="mute" class="mute" type="button" aria-label="Sound on or off" aria-pressed="false">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3z" /><path class="waves" d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" /><path class="x" d="M16 9l5 6m0-6l-5 6" /></svg>
             </button>
-            <span class="lamp" id="itLamp" aria-hidden="true">IT</span>
           </span>
         </header>
 
@@ -127,14 +126,22 @@
               <p class="roundend__label">Round over</p>
               <p id="roundWinner" class="roundend__winner"></p>
               <p id="roundNext" class="roundend__next"></p>
+              <p id="roundRules" class="roundend__rules"></p>
               <div class="roundend__row">
-                <span id="roundCount" class="roundend__count">5</span>
+                <span id="roundCount" class="roundend__count">15</span>
+                <button id="roundReady" class="lbtn lbtn--pink" type="button">Ready</button>
+              </div>
+              <p id="roundReadyCount" class="roundend__next"></p>
+              <div class="roundend__row">
                 <button id="roundShare" class="lbtn" type="button">Share</button>
                 <a id="roundExit" class="lbtn lbtn--cyan" href="/">Exit</a>
               </div>
             </div>
             <p id="status" role="status"></p>
-            <div id="board"></div>
+            <div class="hudright">
+              <span class="lamp" id="itLamp" aria-hidden="true">IT</span>
+              <div id="board"></div>
+            </div>
           </div>
         </div>
 

@@ -42,6 +42,8 @@ export const Player = schema({
   pet: t.number(),
   /** Marked red: "it" in Cube Tag, infected in Infection. */
   hot: t.boolean(),
+  /** Pressed Ready while the winner card waits for the next round (bots are always ready then). */
+  ready: t.boolean(),
 });
 export type Player = SchemaType<typeof Player>;
 
